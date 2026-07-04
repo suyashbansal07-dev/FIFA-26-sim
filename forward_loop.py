@@ -115,18 +115,25 @@ def _bins(settled):
 
 
 def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
-    rows = _read_jsonl(ledger_path)
+    all_rows = _read_jsonl(ledger_path)
+    # the ledger keeps every refresh's forecast (history); score only the latest
+    # PRE-MATCH forecast per fixture, else re-forecast fixtures dominate the metrics.
+    # Forecasts recorded after the match date stay individually counted as late.
+    all_rows.sort(key=lambda r: r["recorded_at"])
+    valid, late = [], 0
+    for r in all_rows:
+        if pd.Timestamp(r["recorded_at"]).date() > pd.Timestamp(r["match_date"]).date():
+            late += 1
+        else:
+            valid.append(r)
+    revisions = len(valid) - len({r["fixture_id"] for r in valid})
+    rows = list({r["fixture_id"]: r for r in valid}.values())
     features = load_match_features()
-    settled, pending, late = [], 0, 0
+    settled, pending = [], 0
     for forecast in rows:
         result = _find_result(matches, forecast)
         if result is None:
             pending += 1
-            continue
-        recorded_date = pd.Timestamp(forecast["recorded_at"]).date()
-        match_date = pd.Timestamp(forecast["match_date"]).date()
-        if recorded_date > match_date:
-            late += 1
             continue
         probs = np.array([forecast["p_home"], forecast["p_draw"], forecast["p_away"]])
         y, home_score, away_score = _outcome(result, forecast)
@@ -154,7 +161,8 @@ def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
         settled.append(settled_row)
     report = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "ledger_rows": len(rows),
+        "ledger_rows": len(all_rows),
+        "revisions_excluded": revisions,
         "settled": len(settled),
         "pending": pending,
         "late_excluded": late,
