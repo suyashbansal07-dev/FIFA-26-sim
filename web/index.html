@@ -59,6 +59,9 @@
       <button id="whatifReset" hidden onclick="resetWhatif()" style="font-size:12px;padding:2px 10px">back to real odds</button></h2>
   <table id="bracketTbl"></table>
 
+  <h2>Consensus bracket <span class="mut">— modal champion + coherent path across all sims</span></h2>
+  <div id="consensus" class="mut">loading…</div>
+
   <h2>Round of 16 <span class="mut">— pin winners, then recompute for a what-if bracket</span></h2>
   <div class="cards" id="fixtures"></div>
   <div class="row" style="margin-top:10px">
@@ -99,7 +102,9 @@ function renderMeta() {
   const m = DATA.meta;
   $('meta').textContent = `trained on ${m.trained_matches} matches (${m.train_from} → ${m.newest_result}), ` +
     `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
-  $('simsNote').textContent = `— ${m.sims.toLocaleString()} ${m.sampler || 'antithetic'} Monte Carlo runs of the remaining bracket`;
+  const unc = m.uncertainty && m.uncertainty.mode === 'bootstrap-ensemble'
+    ? ` · parameter uncertainty: ${m.uncertainty.boots}-refit bootstrap ensemble` : '';
+  $('simsNote').textContent = `— ${m.sims.toLocaleString()} ${m.sampler || 'antithetic'} Monte Carlo runs of the remaining bracket${unc}`;
 }
 
 function renderBracket(bracket, whatif) {
@@ -112,6 +117,38 @@ function renderBracket(bracket, whatif) {
     `<tr><th>Team</th><th class="num">reach QF</th><th class="num">reach SF</th>
      <th class="num">reach final</th><th class="num">champion</th><th></th></tr>` + rows;
   $('whatifBadge').hidden = $('whatifReset').hidden = !whatif;
+}
+
+function roundName(slot) {
+  return slot === 'F' ? 'Final' : slot.startsWith('SF') ? 'Semifinal'
+       : slot.startsWith('QF') ? 'Quarterfinal' : 'Round of 16';
+}
+
+function renderConsensus(c) {
+  if (!c) { $('consensus').textContent = 'no consensus yet — refresh first'; return; }
+  const picks = [...c.consensus_path.picks].reverse();  // display R16 -> Final
+  const rows = picks.map(p =>
+    `<tr><td class="mut">${roundName(p.slot)}</td><td>${p.winner}
+       ${p.known ? '<span class="badge">played</span>' : ''}</td>
+     <td class="num">${pct(p.conditional_p)}</td>
+     <td><span class="bar" style="width:${Math.max(2, 160 * p.conditional_p)}px"></span></td></tr>`).join('');
+  const paths = c.top_paths.map((t, i) => {
+    const f = t.path['F'], sf = [t.path['SF-1'], t.path['SF-2']];
+    const runnerUp = sf[0] === f ? sf[1] : sf[0];
+    return `<tr><td class="mut">#${i + 1}</td><td>${f} beat ${runnerUp}</td>
+      <td class="mut">SF: ${sf[0]}, ${sf[1]}</td><td class="num">${(100 * t.share).toFixed(2)}%</td></tr>`;
+  }).join('');
+  $('consensus').innerHTML = `
+    <p style="margin:0 0 8px;color:var(--ink)">Consensus champion: <b>${c.modal_champion.team}</b>
+      (${pct(c.modal_champion.p)} of ${c.sims.toLocaleString()} sims) ·
+      full-path joint support ${(100 * c.consensus_path.joint_support).toFixed(3)}%</p>
+    <table style="max-width:560px"><tr><th>Round</th><th>Consensus winner</th>
+      <th class="num">conditional</th><th></th></tr>${rows}</table>
+    <p style="margin:10px 0 4px">Most frequent complete finishes (joint mode):</p>
+    <table style="max-width:560px"><tr><th></th><th>Final</th><th>Semifinalists</th>
+      <th class="num">share</th></tr>${paths}</table>
+    <p>conditional = winner frequency among sims consistent with all prior picks;
+       picks resolved champion-first (Final → R16), so the path is always coherent</p>`;
 }
 
 function renderFixtures() {
@@ -211,6 +248,7 @@ async function doWhatif() {
                                        body: JSON.stringify({ overrides, sims: +$('knobSims').value,
                                                               sampler: $('knobSampler').value }) });
     renderBracket(r.bracket, true);
+    renderConsensus(r.consensus);
     $('bracketTbl').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) { alert(e.message); }
 }
@@ -218,6 +256,7 @@ async function doWhatif() {
 function resetWhatif() {
   document.querySelectorAll('select.pin').forEach(s => s.value = '');
   renderBracket(DATA.bracket, false);
+  renderConsensus(DATA.consensus);
 }
 
 function renderBacktest(b) {
@@ -254,7 +293,8 @@ async function loadBacktest() {
 
 async function load() {
   DATA = await j('/api/data');
-  renderMeta(); renderBracket(DATA.bracket, false); renderFixtures(); renderRatings();
+  renderMeta(); renderBracket(DATA.bracket, false); renderConsensus(DATA.consensus);
+  renderFixtures(); renderRatings();
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
   $('knobSims').value = DATA.meta.sims;

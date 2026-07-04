@@ -201,6 +201,69 @@ def test_vectorized_tournament_sampler_outputs_all_teams():
         assert abs(sum(p[3] for p in probs.values()) - 1) < 1e-12
 
 
+def test_consensus_modal_and_coherent():
+    from consensus import build_consensus
+    bracket = {"r16": [{"id": "R16-1"}, {"id": "R16-2"}], "qf": [{"id": "QF-1"}],
+               "sf": [{"id": "SF-1"}], "final": {"id": "F"}}
+    paths = {"teams": ["A", "B", "C", "D"], "winners": {
+        "R16-1": np.array([0, 0, 0, 0, 0, 1, 1, 0, 0, 0], dtype=np.int16),
+        "R16-2": np.array([2, 2, 2, 3, 3, 2, 2, 2, 3, 2], dtype=np.int16),
+        "QF-1":  np.array([0, 0, 0, 0, 0, 2, 2, 0, 0, 0], dtype=np.int16),
+        "SF-1":  np.array([0, 0, 0, 0, 0, 2, 2, 2, 0, 0], dtype=np.int16),
+        "F":     np.array([0, 0, 0, 0, 0, 2, 2, 2, 3, 3], dtype=np.int16),
+    }}
+    c = build_consensus(paths, bracket, known={"R16-1": "A"})
+    assert c["modal_champion"] == {"team": "A", "p": 0.5}
+    picks = {p["slot"]: p for p in c["consensus_path"]["picks"]}
+    assert picks["F"]["winner"] == "A" and picks["SF-1"]["winner"] == "A"
+    assert picks["R16-2"]["winner"] == "C" and picks["R16-2"]["conditional_p"] == 0.6
+    assert picks["R16-1"]["known"] and not picks["F"]["known"]
+    assert c["consensus_path"]["joint_support"] == 0.3
+    top = c["top_paths"][0]
+    assert top["count"] == 3 and top["path"] == {
+        "R16-1": "A", "R16-2": "C", "QF-1": "A", "SF-1": "A", "F": "A"}
+
+
+def test_run_ensemble_mixes_bootstrap_samples():
+    import json
+    from pathlib import Path
+    from wc_sim import run_ensemble, run_tournament
+    bracket = json.loads((Path(__file__).parent / "bracket_2026.json").read_text())
+    teams = sorted({t for fx in bracket["r16"] for t in (fx["home"], fx["away"])})
+    up = {"attack": {t: 0.1 * i for i, t in enumerate(teams)},
+          "defence": {t: 0.0 for t in teams}, "hfa": 0.2, "rho": -0.08}
+    down = {"attack": {t: 0.1 * (len(teams) - i) for i, t in enumerate(teams)},
+            "defence": {t: 0.0 for t in teams}, "hfa": 0.2, "rho": -0.08}
+    probs, paths = run_ensemble([up, down], {}, bracket, {}, 128, "antithetic", seed=5)
+    assert len(paths["winners"]["F"]) == 128, "ensemble must simulate all requested paths"
+    assert abs(sum(p[3] for p in probs.values()) - 1.0) < 1e-9
+    solo = run_tournament(
+        Simulator(up["attack"], up["defence"], 0.2, -0.08, np.random.default_rng(5)),
+        bracket, {}, 128, "antithetic")
+    best_up = max(up["attack"], key=up["attack"].get)
+    assert probs[best_up][3] < solo[best_up][3], \
+        "mixing an opposing sample must soften the favorite's championship probability"
+
+
+def test_run_tournament_paths_respect_bracket_tree():
+    import json
+    from pathlib import Path
+    from wc_sim import run_tournament
+    bracket = json.loads((Path(__file__).parent / "bracket_2026.json").read_text())
+    teams = sorted({t for fx in bracket["r16"] for t in (fx["home"], fx["away"])})
+    atk = {t: 0.1 * i for i, t in enumerate(teams)}
+    dfn = {t: -0.05 * i for i, t in enumerate(teams)}
+    sim = Simulator(atk, dfn, 0.2, -0.08, np.random.default_rng(3))
+    probs, paths = run_tournament(sim, bracket, {}, 64, "antithetic", return_paths=True)
+    w, names = paths["winners"], paths["teams"]
+    for fx in bracket["qf"] + bracket["sf"] + [bracket["final"]]:
+        a, b = fx["from"]
+        ok = (w[fx["id"]] == w[a]) | (w[fx["id"]] == w[b])
+        assert ok.all(), f"{fx['id']} winner must come from {a}/{b}"
+    champ_share = sum(p[3] for p in probs.values())
+    assert abs(champ_share - 1.0) < 1e-9, "champion probabilities must sum to 1"
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in sorted(globals().items()) if k.startswith("test_")]:
         fn()

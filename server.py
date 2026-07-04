@@ -23,16 +23,18 @@ from flask import Flask, jsonify, request
 
 import fetch_data
 from backtest import write_backtest
+from consensus import build_consensus
 from forward_loop import update_forward_loop
 from wc_sim import (DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
-                    load_matches, markets, match_rates, run_tournament, shootout_rates,
-                    team_params)
+                    load_matches, markets, match_rates, run_ensemble, run_tournament,
+                    shootout_rates, team_params)
 
 ROOT = Path(__file__).parent
 STATE_FILE = ROOT / "output" / "state.json"
 BACKTEST_FILE = ROOT / "output" / "backtest.json"
+SAMPLES_FILE = ROOT / "output" / "param_samples.json"
 app = Flask(__name__, static_folder="web", static_url_path="")
-STATE = {"payload": None, "params": None, "pens": {}}  # params = (atk, dfn, hfa, rho)
+STATE = {"payload": None, "params": None, "pens": {}, "samples": None}  # params = (atk, dfn, hfa, rho)
 LOCK = threading.Lock()
 BACKTEST_LOCK = threading.Lock()
 CFG = {"sims": DEFAULT_SIMS, "half_life": 550.0, "friendly_weight": 1.0,
@@ -53,6 +55,19 @@ def card(home, away, venue=""):
             "grid": [[round(v, 5) for v in row] for row in g]}
 
 
+def _load_samples(df):
+    """Bootstrap parameter samples (uncertainty.py), only if they match the current
+    knobs and data date — stale samples silently fall back to the point estimate."""
+    if not SAMPLES_FILE.exists():
+        return None
+    s = json.loads(SAMPLES_FILE.read_text())
+    if (s.get("half_life") == CFG["half_life"]
+            and s.get("friendly_weight") == CFG["friendly_weight"]
+            and s.get("data_max_date") == str(df["date"].max().date())):
+        return s
+    return None
+
+
 def refresh():
     """Scrape -> refit -> re-simulate -> rebuild payload. Serialized by LOCK."""
     with LOCK:
@@ -65,8 +80,16 @@ def refresh():
         shootouts = pd.read_csv(ROOT / "data" / "shootouts.csv", parse_dates=["date"])
         STATE["pens"] = shootout_rates(shootouts)
         known = known_winners(bracket, df, shootouts)
-        sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
-        probs = run_tournament(sim, bracket, known, CFG["sims"], CFG["sampler"])
+        STATE["samples"] = _load_samples(df)
+        if STATE["samples"]:
+            probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
+                                        bracket, known, CFG["sims"], CFG["sampler"])
+            uncertainty = {"mode": "bootstrap-ensemble", "boots": STATE["samples"]["boots"]}
+        else:
+            sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
+            probs, paths = run_tournament(sim, bracket, known, CFG["sims"], CFG["sampler"],
+                                          return_paths=True)
+            uncertainty = {"mode": "point-estimate"}
 
         fixtures = []
         for fx in bracket["r16"]:
@@ -82,6 +105,7 @@ def refresh():
                      "hfa": round(hfa, 3), "rho": round(rho, 3),
                      "sims": CFG["sims"], "half_life_days": CFG["half_life"],
                      "friendly_weight": CFG["friendly_weight"], "sampler": CFG["sampler"],
+                     "uncertainty": uncertainty,
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "fixtures": fixtures,
             "tree": {k: bracket[k] for k in ("qf", "sf", "final")},
@@ -94,6 +118,7 @@ def refresh():
             "ratings": sorted(
                 ({"team": t, "attack": round(atk[t], 3), "defence": round(dfn[t], 3)}
                  for t in atk), key=lambda r: -(r["attack"] - r["defence"]))[:30],
+            "consensus": build_consensus(paths, bracket, known),
         }
         STATE["payload"]["meta"]["forward_loop"] = update_forward_loop(STATE["payload"])
         STATE_FILE.parent.mkdir(exist_ok=True)
@@ -213,12 +238,26 @@ def api_whatif():
     sampler = body.get("sampler", CFG["sampler"])
     if sampler not in SAMPLERS:
         return jsonify({"error": f"sampler must be one of {SAMPLERS}"}), 400
-    sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
-    probs = run_tournament(sim, bracket, known, sims, sampler)
-    return jsonify({"overrides": overrides, "sims": sims, "sampler": sampler, "bracket": sorted(
+    if STATE["samples"]:
+        probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
+                                    bracket, known, sims, sampler)
+    else:
+        sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
+        probs, paths = run_tournament(sim, bracket, known, sims, sampler, return_paths=True)
+    return jsonify({"overrides": overrides, "sims": sims, "sampler": sampler,
+                    "consensus": build_consensus(paths, bracket, known),
+                    "bracket": sorted(
         ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
           "final": round(p[2], 4), "champion": round(p[3], 4)}
          for t, p in probs.items()), key=lambda r: -r["champion"])})
+
+
+@app.get("/api/consensus")
+def api_consensus():
+    c = (STATE["payload"] or {}).get("consensus")
+    if not c:
+        return jsonify({"error": "no consensus yet - refresh first"}), 404
+    return jsonify(c)
 
 
 @app.get("/api/backtest")

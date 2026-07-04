@@ -192,8 +192,9 @@ def known_winners(bracket, played, shootouts):
     return known
 
 
-def run_tournament(sim, bracket, known, n_sims, sampler="antithetic"):
-    """Returns {team: [p_reach_QF, p_reach_SF, p_reach_Final, p_champion]}."""
+def run_tournament(sim, bracket, known, n_sims, sampler="antithetic", return_paths=False):
+    """Returns {team: [p_reach_QF, p_reach_SF, p_reach_Final, p_champion]};
+    with return_paths also ({"teams": [...], "winners": {slot: int16 array}}) per sim."""
     teams = list(dict.fromkeys(
         [t for fx in bracket["r16"] for t in (fx["home"], fx["away"])] + list(known.values())
     ))
@@ -230,9 +231,37 @@ def run_tournament(sim, bracket, known, n_sims, sampler="antithetic"):
             winners[fx["id"]] = choose(fx, a, b)
             np.add.at(reach[:, level], winners[fx["id"]], 1)
     f = bracket["final"]
-    champ = choose(f, winners[f["from"][0]], winners[f["from"][1]])
-    np.add.at(reach[:, 3], champ, 1)
-    return {teams[i]: row / n_sims for i, row in enumerate(reach) if row.sum()}
+    winners[f["id"]] = choose(f, winners[f["from"][0]], winners[f["from"][1]])
+    np.add.at(reach[:, 3], winners[f["id"]], 1)
+    probs = {teams[i]: row / n_sims for i, row in enumerate(reach) if row.sum()}
+    if return_paths:
+        return probs, {"teams": teams, "winners": winners}
+    return probs
+
+
+def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antithetic", seed=None):
+    """Mixture over bootstrap parameter samples (uncertainty.py): each sample simulates
+    an equal share of paths, propagating estimation uncertainty into the bracket."""
+    B = len(param_samples)
+    per = [n_sims // B + (1 if i < n_sims % B else 0) for i in range(B)]
+    rng = np.random.default_rng(seed)
+    agg, all_winners, teams, total = {}, None, None, 0
+    for ps, n in zip(param_samples, per):
+        if n == 0:
+            continue
+        sim = Simulator(ps["attack"], ps["defence"], ps["hfa"], ps["rho"], rng, pens=pens)
+        probs, paths = run_tournament(sim, bracket, known, n, sampler, return_paths=True)
+        teams = paths["teams"]
+        if all_winners is None:
+            all_winners = {k: [v] for k, v in paths["winners"].items()}
+        else:
+            for k, v in paths["winners"].items():
+                all_winners[k].append(v)
+        for t, p in probs.items():
+            agg[t] = agg.get(t, 0) + np.asarray(p) * n
+        total += n
+    winners = {k: np.concatenate(v) for k, v in all_winners.items()}
+    return {t: p / total for t, p in agg.items()}, {"teams": teams, "winners": winners}
 
 
 # ---------------- reporting ----------------
