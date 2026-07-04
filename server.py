@@ -432,6 +432,11 @@ def index():
     return app.send_static_file("index.html")
 
 
+@app.get("/favicon.ico")
+def favicon():
+    return "", 204
+
+
 @app.get("/api/data")
 def api_data():
     return jsonify(_attach_external(STATE["payload"]))
