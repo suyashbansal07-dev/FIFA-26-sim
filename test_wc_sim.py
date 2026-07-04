@@ -120,6 +120,24 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         assert settled["settled"] == 1 and settled["late_excluded"] == 1
 
 
+def test_forward_safe_context_uses_only_prior_matches():
+    from feature_context import add_forward_safe_context
+    rows = pd.DataFrame({
+        "date": pd.to_datetime(["2026-01-01", "2026-01-05"]),
+        "home_team": ["A", "A"],
+        "away_team": ["B", "C"],
+        "home_score": [2, 1],
+        "away_score": [0, 1],
+    })
+    out = add_forward_safe_context(rows)
+    first = out.iloc[0]
+    second = out.iloc[1]
+    assert first.home_matches_seen == 0 and first.away_matches_seen == 0
+    assert second.home_matches_seen == 1
+    assert second.home_days_rest == 4
+    assert second.home_ppg_recent == 3
+
+
 def test_stronger_team_advances_more():
     atk = {"Strong": 0.8, "Weak": -0.8}
     dfn = {"Strong": -0.5, "Weak": 0.5}

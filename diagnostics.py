@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from backtest import rps
+from feature_context import add_forward_safe_context, form_bucket, rest_bucket
 from wc_sim import ROOT, dc_grid, fit_model, load_matches, team_params
 
 OUT = Path(__file__).parent / "output"
@@ -92,6 +93,8 @@ def _forecast_records(df, confeds, start, refit_days, train_years, half_life, fr
                 "neutral": bool(row.neutral), "home_confed": hc, "away_confed": ac,
                 "confed_pair": f"{hc}-{ac}", "home_score": int(row.home_score),
                 "away_score": int(row.away_score), "outcome": y,
+                "rest_bucket": rest_bucket(row.home_days_rest, row.away_days_rest),
+                "form_bucket": form_bucket(row.home_ppg_recent, row.away_ppg_recent),
                 "p_home": float(p[0]), "p_draw": float(p[1]), "p_away": float(p[2]),
                 "fav_p": float(p.max()), "fav_hit": int(p.argmax() == y),
                 "rps": rps(p, y),
@@ -155,7 +158,7 @@ def optional_feature_coverage(root=ROOT):
 def diagnose(start="2026-01-01", refit_days=45, train_years=4.0,
              half_life=550.0, friendly_weight=1.0, verbose=True):
     raw = pd.read_csv(ROOT / "data" / "matches.csv", parse_dates=["date"])
-    df = load_matches(years=train_years + 1.5)
+    df = add_forward_safe_context(load_matches(years=train_years + 1.5))
     confeds = infer_confederations(raw)
     records, skipped = _forecast_records(df, confeds, start, refit_days, train_years,
                                          half_life, friendly_weight, verbose)
@@ -184,10 +187,13 @@ def diagnose(start="2026-01-01", refit_days=45, train_years=4.0,
             "neutral": slice_summary(records, "neutral"),
             "home_confed": slice_summary(records, "home_confed"),
             "confed_pair": slice_summary(records, "confed_pair", min_n=12),
+            "rest_bucket": slice_summary(records, "rest_bucket"),
+            "form_bucket": slice_summary(records, "form_bucket"),
         },
         "scorelines": scoreline_summary(records),
         "notes": [
             "Confederations are inferred from confederation-specific competitions in the results data.",
+            "Rest/form context is computed from earlier matches only, before each row updates team history.",
             "Optional xG/stats are reported for coverage only and are not used unless coverage is adequate.",
         ],
     }

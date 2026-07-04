@@ -38,7 +38,9 @@ ignored by git; rerun the scripts above to rebuild them.
   Brier / log-loss vs uniform + train-frequency baselines.
   Latest: **RPS 0.1578 vs 0.236 uniform** over 391 matches (Jan–Jul 2026)
 - `diagnostics.py` — evidence-first bias report: tournament/neutral/confed
-  slices, exact-scoreline residuals, and optional xG/stats coverage
+  slices, rest/form slices, exact-scoreline residuals, and optional xG/stats coverage
+- `feature_context.py` — forward-safe rest and recent-form features derived only
+  from matches played before each row
 - `forward_loop.py` — append-only forward forecast ledger and no-leakage
   calibration loop; refresh records unplayed fixtures, later runs settle them
 - `bracket_2026.json` — remaining bracket state (pairings, QF/SF tree, venues);
