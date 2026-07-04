@@ -23,6 +23,7 @@ from flask import Flask, jsonify, request
 
 import fetch_data
 from backtest import write_backtest
+from forward_loop import update_forward_loop
 from wc_sim import (Simulator, dc_grid, fit_model, known_winners, load_matches,
                     markets, match_rates, run_tournament, shootout_rates, team_params)
 
@@ -91,6 +92,7 @@ def refresh():
                 ({"team": t, "attack": round(atk[t], 3), "defence": round(dfn[t], 3)}
                  for t in atk), key=lambda r: -(r["attack"] - r["defence"]))[:30],
         }
+        STATE["payload"]["meta"]["forward_loop"] = update_forward_loop(STATE["payload"])
         STATE_FILE.parent.mkdir(exist_ok=True)
         STATE_FILE.write_text(json.dumps(
             {"payload": STATE["payload"], "pens": STATE["pens"],

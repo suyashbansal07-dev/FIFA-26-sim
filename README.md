@@ -17,7 +17,7 @@ py -3.13 -m venv .venv                      # penaltyblog has no cp314 wheels ye
 First boot scrapes, fits, and simulates automatically (~15 s). The UI has a
 Refresh button; the server also auto-refreshes every 6 h (`--auto-refresh-hours`).
 CLI equivalents: `fetch_data.py`, `wc_sim.py --sims 10000`, `backtest.py`,
-`diagnostics.py`, `test_wc_sim.py`.
+`diagnostics.py`, `forward_loop.py`, `test_wc_sim.py`.
 
 Fetched CSVs in `data/` and generated files in `output/` are intentionally
 ignored by git; rerun the scripts above to rebuild them.
@@ -39,6 +39,8 @@ ignored by git; rerun the scripts above to rebuild them.
   Latest: **RPS 0.1578 vs 0.236 uniform** over 391 matches (Jan–Jul 2026)
 - `diagnostics.py` — evidence-first bias report: tournament/neutral/confed
   slices, exact-scoreline residuals, and optional xG/stats coverage
+- `forward_loop.py` — append-only forward forecast ledger and no-leakage
+  calibration loop; refresh records unplayed fixtures, later runs settle them
 - `bracket_2026.json` — remaining bracket state (pairings, QF/SF tree, venues);
   played knockout winners are consumed automatically from the data
 - Knobs: `--sims`, `--half-life` (550 d default), `--years` (4), `--seed`

@@ -2,6 +2,8 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson
+from tempfile import TemporaryDirectory
+from pathlib import Path
 
 from wc_sim import MAX_GOALS, Simulator, dc_grid, decay_weights, markets, match_rates, shootout_rates
 
@@ -95,6 +97,27 @@ def test_confederation_inference_uses_competition_evidence():
     meta = infer_confederations(rows)
     assert meta["France"]["confed"] == "UEFA"
     assert meta["Mexico"]["confed"] == "CONCACAF"
+
+
+def test_forward_loop_settles_only_pre_match_forecasts():
+    from forward_loop import record_payload_forecasts, settle_forward_forecasts
+    payload = {"meta": {"generated": "2026-07-01T00:00:00+00:00", "half_life_days": 550,
+                        "friendly_weight": 1, "hfa": 0.2, "rho": -0.08},
+               "fixtures": [{"id": "R16-1", "date": "2026-07-04", "home": "Canada",
+                             "away": "Morocco", "venue": "United States", "played": False,
+                             "p_home": 0.2, "p_draw": 0.3, "p_away": 0.5, "over25": 0.4}]}
+    matches = pd.DataFrame({"date": pd.to_datetime(["2026-07-04"]),
+                            "home_team": ["Canada"], "away_team": ["Morocco"],
+                            "home_score": [1], "away_score": [0]})
+    with TemporaryDirectory() as d:
+        ledger = Path(d) / "ledger.jsonl"
+        report = Path(d) / "calibration.json"
+        record_payload_forecasts(payload, ledger, now=pd.Timestamp("2026-07-01", tz="UTC").to_pydatetime())
+        settled = settle_forward_forecasts(matches, ledger, report)
+        assert settled["settled"] == 1 and settled["pending"] == 0 and settled["late_excluded"] == 0
+        record_payload_forecasts(payload, ledger, now=pd.Timestamp("2026-07-05", tz="UTC").to_pydatetime())
+        settled = settle_forward_forecasts(matches, ledger, report)
+        assert settled["settled"] == 1 and settled["late_excluded"] == 1
 
 
 def test_stronger_team_advances_more():
