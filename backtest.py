@@ -105,7 +105,7 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
 
 
 def write_backtest(start="2026-01-01", refit_days=45, train_years=4.0,
-                   half_life=550.0, friendly_weight=1.0, verbose=True):
+                   half_life=1100.0, friendly_weight=1.0, verbose=True):
     df = load_matches(years=train_years + 1.5)
     df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
     r = run_backtest(df, start, refit_days, train_years, half_life, friendly_weight, verbose)
@@ -119,7 +119,7 @@ def main():
     ap.add_argument("--start", default="2026-01-01")
     ap.add_argument("--refit-days", type=int, default=30)
     ap.add_argument("--train-years", type=float, default=4.0)
-    ap.add_argument("--half-life", type=float, default=550.0)
+    ap.add_argument("--half-life", type=float, default=1100.0)
     ap.add_argument("--friendly-weight", type=float, default=1.0)
     ap.add_argument("--sweep", action="store_true", help="grid-search half-life x friendly weight")
     args = ap.parse_args()

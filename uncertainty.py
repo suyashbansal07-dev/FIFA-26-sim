@@ -38,7 +38,7 @@ def bootstrap_samples(df, boots, half_life, friendly_weight, seed=26, required=(
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--boots", type=int, default=16)
-    ap.add_argument("--half-life", type=float, default=550.0)
+    ap.add_argument("--half-life", type=float, default=1100.0)
     ap.add_argument("--friendly-weight", type=float, default=1.0)
     ap.add_argument("--years", type=float, default=4.0)
     ap.add_argument("--seed", type=int, default=26)
