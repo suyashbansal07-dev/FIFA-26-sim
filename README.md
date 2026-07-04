@@ -85,6 +85,7 @@ flowchart LR
 | Time decay | exponential, half-life 1100 d (sweep-validated) | momentum without starving the fit |
 | Goal scale | 1.10 post-fit rate calibration | reduces low-score overconservatism out-of-sample |
 | External prior | capped player/market/rank/chemistry rate adjustment, weight 0.12 | richer signal without letting market data dominate |
+| Form prior | opponent-adjusted recent-form/xG signal, default weight 0.00 | wired and tunable, but disabled by default after OOS sweep |
 | Venue | per-match neutral flag in fit; γ only for hosts at own venue | tournament realism |
 | Knockout ties | 30-min Poisson extra time, then Beta(5,5)-shrunk historical shootout rates | principled, not a coin flip |
 | Uncertainty | bootstrap parameter ensemble mixed into sim | point MLE is overconfident |

@@ -70,6 +70,33 @@ def test_external_strength_uses_rank_only_fallback_without_fake_player_data():
     assert strength["B"] < strength["Cape Verde"] < strength["A"]
 
 
+def test_form_strength_rewards_opponent_adjusted_recent_run():
+    from form_signals import build_recent_form_strength, form_rate_adjustment
+    rows = pd.DataFrame([
+        {"date": "2026-06-01", "home_team": "Underdog", "away_team": "Elite",
+         "home_score": 1, "away_score": 1},
+        {"date": "2026-06-05", "home_team": "Underdog", "away_team": "Strong",
+         "home_score": 2, "away_score": 1},
+        {"date": "2026-06-01", "home_team": "Favorite", "away_team": "Weak",
+         "home_score": 1, "away_score": 0},
+        {"date": "2026-06-05", "home_team": "Favorite", "away_team": "Weak",
+         "home_score": 0, "away_score": 0},
+    ])
+    external = {"Elite": 1.8, "Strong": 1.0, "Favorite": 0.7,
+                "Underdog": -0.7, "Weak": -1.0}
+    strength, meta = build_recent_form_strength(rows, external_strength=external)
+    assert meta["rows"] >= 2
+    assert strength["Underdog"] > strength["Favorite"]
+    assert form_rate_adjustment("Underdog", "Favorite", strength, 0.04) > 0
+
+
+def test_form_prior_moves_rates_after_external_prior():
+    atk, dfn = {"A": 0.0, "B": 0.0}, {"A": 0.0, "B": 0.0}
+    lam, mu = match_rates(atk, dfn, 0.0, "A", "B", "", goal_scale=1.0,
+                          form_strength={"A": 1.0, "B": -1.0}, form_weight=0.04)
+    assert lam > 1.0 and mu < 1.0
+
+
 def test_decay_weights_and_friendly_downweight():
     dates = pd.Series(pd.to_datetime(["2026-01-01", "2026-01-01", "2024-01-01"]))
     friendly = pd.Series([False, True, False])

@@ -205,3 +205,25 @@ Backtest after fallback remains stable:
 - Brier `0.4884`
 - Log-loss `0.8385`
 - In-sample RPS `0.1460`, OOS gap `+0.0077`
+
+## Recent-form prior bias check
+
+The Cape Verde/Canada complaint is not fully explained by missing FIFA rank:
+with the rank-only fallback, Cape Verde still rates as an underdog. I added a
+capped `form_signals.py` prior that scores recent results against rank/market
+expectations and can use prior-match xG when present. It is wired through
+`match_rates`, the server, the UI, and backtest, but defaults to `0.00` because
+the walk-forward sweep showed overfit:
+
+| Form weight | RPS | Brier | Log-loss | In-sample RPS | OOS gap |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.000 | 0.1537 | 0.4884 | 0.8385 | 0.1460 | +0.0077 |
+| 0.005 | 0.1538 | 0.4886 | 0.8388 | 0.1449 | +0.0089 |
+| 0.010 | 0.1539 | 0.4888 | 0.8392 | 0.1438 | +0.0101 |
+| 0.020 | 0.1542 | 0.4895 | 0.8402 | 0.1417 | +0.0125 |
+| 0.030 | 0.1545 | 0.4902 | 0.8414 | 0.1398 | +0.0147 |
+| 0.040 | 0.1549 | 0.4911 | 0.8427 | 0.1379 | +0.0170 |
+
+Decision: keep the form prior as an inspectable/tunable engine and show it in
+`/api/case`, but leave the default at `0.00` until more settled forward data
+proves that it improves forecasts without widening the in-sample/OOS gap.
