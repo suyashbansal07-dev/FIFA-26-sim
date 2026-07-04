@@ -43,6 +43,8 @@ ignored by git; rerun the scripts above to rebuild them.
   from matches played before each row
 - `forward_loop.py` — append-only forward forecast ledger and no-leakage
   calibration loop; refresh records unplayed fixtures, later runs settle them
+- `docs/EVIDENCE_LOG.md` — bias diagnostics, repair checks, and current
+  simulation-method decisions
 - `bracket_2026.json` — remaining bracket state (pairings, QF/SF tree, venues);
   played knockout winners are consumed automatically from the data
 - Knobs: `--sims` (1,000,000 default), `--sampler` (`antithetic`, `lhs`, `sobol`,
