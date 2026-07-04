@@ -115,6 +115,31 @@ def _bins(settled):
     return out
 
 
+def calibration_policy(settled, min_settled=12):
+    if len(settled) < min_settled:
+        return {
+            "action": "hold",
+            "reason": f"need at least {min_settled} settled pre-match forecasts",
+            "settled": len(settled),
+            "min_settled": min_settled,
+        }
+    fav_pred = float(np.mean([r["favorite_pred"] for r in settled]))
+    fav_obs = float(np.mean([r["favorite_hit"] for r in settled]))
+    gap = fav_obs - fav_pred
+    if gap < -0.08:
+        action = "reduce_prior_or_goal_confidence"
+    elif gap > 0.08:
+        action = "allow_slightly_more_prior_confidence"
+    else:
+        action = "keep_current_defaults"
+    return {
+        "action": action,
+        "favorite_gap": round(gap, 4),
+        "settled": len(settled),
+        "min_settled": min_settled,
+    }
+
+
 def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
     all_rows = _read_jsonl(ledger_path)
     # the ledger keeps every refresh's forecast (history); score only the latest
@@ -175,6 +200,7 @@ def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
             "favorite_observed": round(float(np.mean([r["favorite_hit"] for r in settled])), 4) if settled else None,
         },
         "reliability": _bins(settled),
+        "calibration_policy": calibration_policy(settled),
         "match_features": feature_coverage(settled),
         "settled_rows": settled,
     }
@@ -187,7 +213,8 @@ def update_forward_loop(payload, matches_path=ROOT / "data" / "matches.csv"):
     recorded = record_payload_forecasts(payload)
     report = settle_forward_forecasts(pd.read_csv(matches_path, parse_dates=["date"]))
     return {**recorded, "settled": report["settled"], "pending": report["pending"],
-            "late_excluded": report["late_excluded"]}
+            "late_excluded": report["late_excluded"],
+            "calibration_policy": report.get("calibration_policy")}
 
 
 def main():

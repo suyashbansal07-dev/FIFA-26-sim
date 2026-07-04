@@ -227,3 +227,19 @@ the walk-forward sweep showed overfit:
 Decision: keep the form prior as an inspectable/tunable engine and show it in
 `/api/case`, but leave the default at `0.00` until more settled forward data
 proves that it improves forecasts without widening the in-sample/OOS gap.
+
+## Forward calibration loop
+
+The forward ledger is now explicitly self-feeding but sample-gated. Each
+refresh records current unplayed fixture forecasts, settles only the latest
+pre-match forecast per fixture, and writes a `calibration_policy` into
+`output/forward_calibration.json` plus `meta.forward_loop`. The policy holds
+until at least 12 settled pre-match forecasts exist. Once that threshold is
+reached it uses favorite predicted-vs-observed gap to recommend one of:
+
+- `reduce_prior_or_goal_confidence`
+- `allow_slightly_more_prior_confidence`
+- `keep_current_defaults`
+
+Current live state: one settled forecast, so policy is `hold`. This prevents a
+single Morocco/Canada hit or miss from auto-tuning the model.

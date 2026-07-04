@@ -172,6 +172,7 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         record_payload_forecasts(payload, ledger, now=pd.Timestamp("2026-07-05", tz="UTC").to_pydatetime())
         settled = settle_forward_forecasts(matches, ledger, report)
         assert settled["settled"] == 1 and settled["late_excluded"] == 1
+        assert settled["calibration_policy"]["action"] == "hold"
 
 
 def test_match_feature_extracts_stats_and_xg_from_espn_shapes():
