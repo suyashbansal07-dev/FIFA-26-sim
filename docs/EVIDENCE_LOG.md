@@ -79,3 +79,47 @@ Decision: use match-wise stats and xG only as post-match diagnostic evidence
 for now. They are not forecast inputs because using current-match xG before
 kickoff would leak the outcome; rolling xG calibration should wait for enough
 settled, no-leak history.
+
+## Forward Calibration — Canada vs Morocco (2026-07-04)
+
+First knockout fixture settled by the forward ledger (no leakage: forecast
+recorded pre-match, scored post-match):
+
+- Result: Canada 0-3 Morocco. Model favorite: Morocco at 45.1% -> favorite hit.
+- Forward RPS 0.1669 (backtest average 0.1578; single-match noise applies).
+- The result entered training data same-day via the ESPN top-up scraper and the
+  model refit consumed it (`known` now pins R16-1 = Morocco).
+
+Loop bug found and fixed while settling: the ledger records one forecast per
+refresh, so the same fixture was being scored 13 times, overweighting
+re-forecast fixtures. `settle_forward_forecasts` now scores only the latest
+pre-match forecast per fixture (`revisions_excluded` reported; history kept).
+
+## Parameter Uncertainty — Bootstrap Ensemble (2026-07-04)
+
+`uncertainty.py` resamples matches with replacement and refits the MLE B times;
+`wc_sim.run_ensemble` mixes simulation paths across samples. Addresses the
+overconfidence blindspot (point estimates ignore estimation error). The server
+uses `output/param_samples.json` only when it matches current knobs and data
+date, else falls back to the point estimate — stale uncertainty is worse than
+none.
+
+## Queue Closures (2026-07-04)
+
+- xG-blended ratings: PARKED with evidence. Only 89 WC matches carry xG, the
+  penaltyblog likelihood requires integer goals, and the forward ledger has one
+  settled knockout fixture — any blend weight would be unvalidatable. Data
+  ingestion stays live (`match_features.py`); revisit when the settled forward
+  sample is meaningful.
+- Market anchor: PARKED. No keyless reliable WC-2026 odds source; the-odds-api
+  requires a signup key. Wire-up documented in README roadmap; needs owner key.
+- Player/lineup layer: PARKED. EA-attribute engines shown in the referenced
+  LinkedIn build ship no calibration evidence; adopting their inputs without
+  validation would regress the pipeline's evidence discipline.
+
+## License (2026-07-04)
+
+MIT -> AGPL-3.0. The engine is deployed as a network service (Flask app);
+AGPL's network-copyleft keeps hosted derivatives open. All runtime deps are
+permissive (MIT/BSD) and AGPL-compatible; martj42 data is CC0; sole author
+relicense.

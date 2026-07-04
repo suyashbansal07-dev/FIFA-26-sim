@@ -1,82 +1,148 @@
-# 2026 World Cup — Dixon-Coles Simulator
+# WC26 — Dixon-Coles World Cup Simulator
 
-Time-weighted Dixon-Coles (1997) engine per `Dixon-Coles Architecture Spec.md`,
-with a web UI, scrapers that pick up every finished game, and a walk-forward
-calibration backtest. Fits attack/defence/home-advantage/rho on ~4 years of
-international results (exponential decay, neutral-venue aware), builds
-tau-corrected scoreline grids, Monte-Carlo simulates the remaining bracket.
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-brightgreen.svg)](LICENSE)
+[![Model: Dixon-Coles](https://img.shields.io/badge/model-Dixon--Coles%20(1997)-orange.svg)](http://web.math.ku.dk/~rolf/teaching/thesis/DixonColes.pdf)
+[![Sims: 1M QMC](https://img.shields.io/badge/bracket%20sim-1M%20paths%2C%20QMC-purple.svg)](#simulation-engine)
 
-## Run
+A statistically rigorous, self-updating prediction engine for the 2026 FIFA World
+Cup. Time-weighted Dixon-Coles bivariate Poisson ratings fit on four years of
+international results, a vectorized million-path Monte Carlo of the remaining
+bracket, honest uncertainty propagation, and a validation loop that scores every
+forecast out-of-sample — wrapped in a small Flask web UI.
+
+> Mid-tournament by design: group stage and Round of 32 are consumed as real
+> results; the sim starts from the live bracket state and re-calibrates after
+> every finished game.
+
+## Highlights
+
+- **Dixon-Coles core** — attack/defence/home-advantage/ρ via penaltyblog's MLE,
+  exponential time decay, neutral-venue-aware fitting, host-only home advantage.
+- **Million-path bracket sim** — vectorized Monte Carlo with variance-reduction
+  samplers (antithetic, Latin hypercube, scrambled Sobol QMC).
+- **Parameter-uncertainty ensemble** — bootstrap refits mixed into the sim so
+  championship tails reflect estimation error, not false confidence.
+- **Consensus bracket** — modal champion plus a coherent champion-anchored path,
+  and the most frequent complete finishes (joint mode) across all paths.
+- **Self-updating** — dual scrapers (martj42 bulk + ESPN same-day top-up with
+  shootout winners); refresh re-scrapes, refits, and re-simulates in seconds.
+- **Evidence discipline** — walk-forward backtest with reliability bins and
+  overfit gap, an append-only forward-forecast ledger scored only pre-match
+  (no leakage), and a written [evidence log](docs/EVIDENCE_LOG.md).
+- **Interactive loops** — what-if winner pinning, tunable half-life / friendly
+  weight / sampler knobs, any-matchup predictor with scoreline heatmap.
+
+## Quickstart
 
 ```powershell
-py -3.13 -m venv .venv                      # penaltyblog has no cp314 wheels yet
+py -3.13 -m venv .venv                        # penaltyblog ships wheels up to cp313
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python server.py              # http://127.0.0.1:8026
+.venv\Scripts\python server.py                # scrape + fit + simulate, then serve
+# open http://127.0.0.1:8026
 ```
 
-First boot scrapes, fits, fetches match stats/xG, and simulates automatically
-(~45 s cold, faster when xG rows are cached). The UI has a
-Refresh button; the server also auto-refreshes every 6 h (`--auto-refresh-hours`).
-CLI equivalents: `fetch_data.py`, `match_features.py`, `wc_sim.py --sims 1000000`,
-`backtest.py`, `diagnostics.py`, `forward_loop.py`, `test_wc_sim.py`.
+Optional extras:
 
-Fetched CSVs in `data/` and generated files in `output/` are intentionally
-ignored by git; rerun the scripts above to rebuild them.
+```powershell
+.venv\Scripts\python uncertainty.py --boots 16   # bootstrap ensemble (server auto-uses)
+.venv\Scripts\python backtest.py                 # walk-forward validation -> UI
+.venv\Scripts\python backtest.py --sweep         # hyperparameter grid by OOS RPS
+.venv\Scripts\python test_wc_sim.py              # self-checks, no framework
+```
 
-## Pieces
+## Architecture
 
-- `server.py` — Flask: web UI, `/api/data`, `/api/predict?home=X&away=Y[&venue=C]`,
-  `/api/sample` (draws resolve to pens), `POST /api/refresh` (scrape → refit → re-sim,
-  ~13 s), `GET/POST /api/backtest`, auto-refresh loop, state persisted to `output/state.json`
-- `web/index.html` — vanilla single-file UI: championship odds, R16 match cards,
-  any-matchup predictor with scoreline heatmap, sample-a-result, team ratings
-- `fetch_data.py` — scrapers: martj42/international_results bulk + ESPN scoreboard
-  same-day top-up (finished games incl. shootout winners; dedup across UTC skew)
-- `match_features.py` - optional ESPN WC match-wise stat/xG ingestion to
-  `data/match_features.csv` (post-match diagnostics only; not a forecast input)
-- `wc_sim.py` — model core: penaltyblog MLE fit (`neutral_venue`-aware), grids,
-  vectorized Monte Carlo, CLI report; writes `output/probabilities.csv`. Training pool is
-  FIFA-competition teams only (drops CONIFA/regional sides the dataset carries)
-- `backtest.py` — walk-forward calibration: monthly refits, out-of-sample RPS /
-  Brier / log-loss vs uniform + train-frequency baselines.
-  Latest: **RPS 0.1578 vs 0.236 uniform** over 391 matches (Jan–Jul 2026)
-- `diagnostics.py` — evidence-first bias report: tournament/neutral/confed
-  slices, rest/form slices, exact-scoreline residuals, optional xG/stats coverage,
-  and post-match xG/stat disagreement checks when `match_features.py` has run
-- `feature_context.py` — forward-safe rest and recent-form features derived only
-  from matches played before each row
-- `forward_loop.py` — append-only forward forecast ledger and no-leakage
-  calibration loop; refresh records unplayed fixtures, later runs settle them and
-  attach post-match feature coverage where available
-- `docs/EVIDENCE_LOG.md` — bias diagnostics, repair checks, and current
-  simulation-method decisions
-- `bracket_2026.json` — remaining bracket state (pairings, QF/SF tree, venues);
-  played knockout winners are consumed automatically from the data
-- Knobs: `--sims` (1,000,000 default), `--sampler` (`antithetic`, `lhs`, `sobol`,
-  `random`), `--half-life` (550 d default), `--years` (4), `--seed`
+```mermaid
+flowchart LR
+    A[martj42 bulk results] --> C[fetch_data.py]
+    B[ESPN scoreboard API] --> C
+    B2[ESPN match stats / xG] --> MF[match_features.py]
+    C --> D[wc_sim.py<br/>Dixon-Coles MLE fit]
+    D --> E[10x10 tau-corrected grids]
+    U[uncertainty.py<br/>bootstrap refits] -.-> F
+    E --> F[vectorized bracket sim<br/>1M paths, QMC]
+    F --> G[consensus.py<br/>modal champion + path]
+    F --> H[server.py Flask API]
+    G --> H
+    H --> I[web/index.html]
+    H --> J[forward_loop.py<br/>pre-match ledger, scored on results]
+    K[backtest.py<br/>walk-forward RPS/Brier] --> H
+    MF -.diagnostics only.-> J
+```
 
-## Simulation methods
+### Model card
 
-- Match scorelines are analytic Dixon-Coles grids; Monte Carlo is used for the
-  path-dependent bracket.
-- Bracket simulation is vectorized with NumPy and defaults to 1,000,000
-  antithetic paths.
-- LHS and Sobol low-discrepancy samplers are available for bracket-path uniforms.
-- Copulas, GBM/mean-reversion, importance sampling, multiprocessing, and GPU
-  acceleration are not enabled yet: the current model has no correlated macro
-  factor paths or rare-tail payoff surface that would justify the added bias and
-  operational complexity.
+| Component | Choice | Why |
+|---|---|---|
+| Goals model | Bivariate Poisson + Dixon-Coles τ correction | low-score dependence (0-0/1-0/0-1/1-1) |
+| Ratings | attack αᵢ, defence βᵢ per team, global γ (home), ρ | spec §2.1–2.2 |
+| Time decay | exponential, half-life 550 d (sweep-validated) | momentum without starving the fit |
+| Venue | per-match neutral flag in fit; γ only for hosts at own venue | tournament realism |
+| Knockout ties | 30-min Poisson extra time, then Beta(5,5)-shrunk historical shootout rates | principled, not a coin flip |
+| Uncertainty | bootstrap parameter ensemble mixed into sim | point MLE is overconfident |
+| Training pool | FIFA-competition teams only | dataset carries CONIFA/regional sides via friendlies |
 
-## Known limitations (spec §5 + deliberate cuts)
+### Validation (latest)
 
-- No lineup/injury awareness; ratings move only through results.
-- Knockout draws use simple proportional extra-time goals, then Beta-shrunk
-  historical shootout rates.
-- No confederation multiplier; 4 years of friendlies+qualifiers connect the graph.
-- xG/stats are diagnostic only until enough no-leak historical coverage proves a
-  forward-safe calibration gain.
-- Group-stage/best-thirds simulation not implemented (tournament already past it).
+| Metric | Model | Uniform | Train-freq |
+|---|---:|---:|---:|
+| RPS (391 OOS matches, Jan–Jul 2026) | **0.1578** | 0.2360 | 0.2203 |
+| Brier | 0.4968 | — | — |
+| Log-loss | 0.8509 | — | — |
 
-## License
+In-sample RPS 0.1427 → out-of-sample gap +0.015 (mild, monitored). Reliability
+bins and the forward ledger (first settled knockout forecast: Morocco favorite
+at 45.1%, hit) live in the UI's *Model validation* section and
+[docs/EVIDENCE_LOG.md](docs/EVIDENCE_LOG.md).
 
-MIT.
+## Web UI & API
+
+| Endpoint | What |
+|---|---|
+| `GET /api/data` | full payload: meta, fixtures + cards, bracket probabilities, consensus, ratings |
+| `GET /api/predict?home=X&away=Y[&venue=C]` | Dixon-Coles card for any matchup |
+| `GET /api/sample?home=X&away=Y` | sample one result (ET + pens on draws) |
+| `GET /api/consensus` | modal champion, coherent path, top complete finishes |
+| `POST /api/whatif` | pin R16 winners, re-simulate the bracket |
+| `POST /api/refresh` | scrape → refit → re-simulate (accepts knob overrides) |
+| `GET/POST /api/backtest` | read / recompute walk-forward validation |
+
+## Project structure
+
+| File | Role |
+|---|---|
+| `wc_sim.py` | model core: fit, grids, vectorized tournament sim, ensemble mixer |
+| `consensus.py` | joint-mode top paths + champion-anchored conditional bracket |
+| `uncertainty.py` | bootstrap refits → `output/param_samples.json` |
+| `server.py` | Flask API + refresh pipeline + auto-refresh loop |
+| `web/index.html` | single-file vanilla-JS UI |
+| `fetch_data.py` | scrapers: martj42 bulk + ESPN top-up (shootouts, aliases, UTC skew) |
+| `match_features.py` | ESPN match stats / xG ingestion (diagnostics only, forward-safe) |
+| `backtest.py` | walk-forward RPS/Brier/log-loss, reliability bins, `--sweep` |
+| `forward_loop.py` | append-only forecast ledger, scored pre-match-only |
+| `diagnostics.py` | evidence-first bias reports |
+| `bracket_2026.json` | live bracket state (pairings, tree, venues, manual overrides) |
+| `docs/EVIDENCE_LOG.md` | every bias found, fix applied, and decision parked |
+
+## Roadmap
+
+- **Market anchor** — closing-odds benchmark + optional log-pool blend (needs an
+  odds-API key; parked with rationale in the evidence log).
+- **xG-blended ratings** — ingestion already live; blend activates once the
+  settled forward sample is large enough to validate a weight.
+- **Player/lineup layer** — missing-starter rating adjustments from public squad
+  data; only lands with calibration evidence, unlike attribute-sim toys.
+
+## Data & acknowledgements
+
+- Results: [martj42/international_results](https://github.com/martj42/international_results) (CC0), ESPN public scoreboard API.
+- Method: Dixon & Coles (1997), *Modelling Association Football Scores and
+  Inefficiencies in the Football Betting Market*, JRSS-C 46(2).
+- MLE engine: [penaltyblog](https://github.com/martineastwood/penaltyblog).
+
+## License & disclaimer
+
+[AGPL-3.0](LICENSE) — run it, fork it, deploy it; hosted derivatives stay open.
+Probabilities are model outputs for education and analysis, **not betting
+advice**. The model cannot see injuries, lineups, or tactics (spec §5).
