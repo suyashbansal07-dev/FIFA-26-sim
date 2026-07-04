@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from wc_sim import dc_grid, fit_model, load_matches, team_params
+from wc_sim import DEFAULT_GOAL_SCALE, dc_grid, fit_model, load_matches, team_params
 
 OUT = Path(__file__).parent / "output"
 
@@ -31,19 +31,19 @@ def rps(probs, outcome):
     return float(np.sum((c[:2] - np.cumsum(o)[:2]) ** 2) / 2)
 
 
-def outcome_probs(atk, dfn, hfa, rho, row):
-    lam = math.exp(atk[row.home_team] + dfn[row.away_team] + (0.0 if row.neutral else hfa))
-    mu = math.exp(atk[row.away_team] + dfn[row.home_team])
+def outcome_probs(atk, dfn, hfa, rho, row, goal_scale=DEFAULT_GOAL_SCALE):
+    lam = goal_scale * math.exp(atk[row.home_team] + dfn[row.away_team] + (0.0 if row.neutral else hfa))
+    mu = goal_scale * math.exp(atk[row.away_team] + dfn[row.home_team])
     g = dc_grid(lam, mu, rho)
     return np.array([np.tril(g, -1).sum(), np.trace(g), np.triu(g, 1).sum()])
 
 
-def _score_rows(rows, atk, dfn, hfa, rho, sink):
+def _score_rows(rows, atk, dfn, hfa, rho, sink, goal_scale=DEFAULT_GOAL_SCALE):
     for row in rows.itertuples():
         if row.home_team not in atk or row.away_team not in atk:
             sink["skipped"] += 1
             continue
-        p = outcome_probs(atk, dfn, hfa, rho, row)
+        p = outcome_probs(atk, dfn, hfa, rho, row, goal_scale)
         y = int(row.outcome)
         sink["rps"].append(rps(p, y))
         sink["brier"].append(float(np.sum((p - np.eye(3)[y]) ** 2)))
@@ -54,7 +54,8 @@ def _score_rows(rows, atk, dfn, hfa, rho, sink):
         sink["freq"].append(rps(sink["_freq"], y))
 
 
-def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight, verbose=True):
+def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
+                 goal_scale=DEFAULT_GOAL_SCALE, verbose=True):
     start, end = pd.Timestamp(start), df["date"].max()
     oos = {"rps": [], "brier": [], "logloss": [], "fav_p": [], "fav_hit": [],
            "uniform": [], "freq": [], "skipped": 0}
@@ -72,10 +73,10 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
         atk, dfn, hfa, rho = team_params(fit_model(train, half_life, friendly_weight))
         freq = train["outcome"].value_counts(normalize=True).reindex([0, 1, 2]).fillna(0).to_numpy()
         oos["_freq"] = ins["_freq"] = freq
-        _score_rows(test, atk, dfn, hfa, rho, oos)
+        _score_rows(test, atk, dfn, hfa, rho, oos, goal_scale)
         # in-sample slice: most recent train window of the same width (overfit gauge)
         _score_rows(train[train["date"] >= block - pd.Timedelta(days=refit_days)],
-                    atk, dfn, hfa, rho, ins)
+                    atk, dfn, hfa, rho, ins, goal_scale)
         if verbose:
             print(f"block {block.date()} -> {block_end.date()}: train {len(train)}, scored {len(test)}")
         block = block_end
@@ -91,7 +92,7 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
     return {
         "config": {"start": str(start.date()), "refit_days": refit_days,
                    "train_years": train_years, "half_life": half_life,
-                   "friendly_weight": friendly_weight},
+                   "friendly_weight": friendly_weight, "goal_scale": goal_scale},
         "n": len(oos["rps"]), "skipped": oos["skipped"],
         "rps": round(float(np.mean(oos["rps"])), 4),
         "rps_uniform": round(float(np.mean(oos["uniform"])), 4),
@@ -105,10 +106,12 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
 
 
 def write_backtest(start="2026-01-01", refit_days=45, train_years=4.0,
-                   half_life=1100.0, friendly_weight=1.0, verbose=True):
+                   half_life=1100.0, friendly_weight=1.0,
+                   goal_scale=DEFAULT_GOAL_SCALE, verbose=True):
     df = load_matches(years=train_years + 1.5)
     df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
-    r = run_backtest(df, start, refit_days, train_years, half_life, friendly_weight, verbose)
+    r = run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
+                     goal_scale, verbose)
     OUT.mkdir(exist_ok=True)
     (OUT / "backtest.json").write_text(json.dumps(r, indent=1))
     return r
@@ -121,6 +124,7 @@ def main():
     ap.add_argument("--train-years", type=float, default=4.0)
     ap.add_argument("--half-life", type=float, default=1100.0)
     ap.add_argument("--friendly-weight", type=float, default=1.0)
+    ap.add_argument("--goal-scale", type=float, default=DEFAULT_GOAL_SCALE)
     ap.add_argument("--sweep", action="store_true", help="grid-search half-life x friendly weight")
     args = ap.parse_args()
 
@@ -131,7 +135,8 @@ def main():
         best = None
         for hl in (250, 550, 1100):
             for fw in (0.3, 0.6, 1.0):
-                r = run_backtest(df, args.start, 45, args.train_years, hl, fw, verbose=False)
+                r = run_backtest(df, args.start, 45, args.train_years, hl, fw,
+                                 args.goal_scale, verbose=False)
                 print(f"{hl:9.0f} | {fw:10.1f} | {r['rps']:.4f}  | {r['logloss']:.4f}  | {r['rps_in_sample']:.4f}")
                 if best is None or r["rps"] < best["rps"]:
                     best = r
@@ -141,7 +146,7 @@ def main():
         return
 
     r = write_backtest(args.start, args.refit_days, args.train_years,
-                       args.half_life, args.friendly_weight)
+                       args.half_life, args.friendly_weight, args.goal_scale)
     print(f"\n=== Walk-forward backtest: {r['n']} matches scored ({r['skipped']} skipped) ===")
     print(f"RPS   model {r['rps']} | uniform {r['rps_uniform']} | train-freq {r['rps_trainfreq']}   (lower better)")
     print(f"Brier {r['brier']} | log-loss {r['logloss']} | in-sample RPS {r['rps_in_sample']} "

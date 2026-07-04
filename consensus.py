@@ -5,7 +5,9 @@ Two empirical views over the same simulated paths:
   - consensus_path: champion-anchored conditional mode — pick the modal champion,
     then resolve every remaining slot (final -> SF -> QF -> R16) by conditional
     frequency among the sims still consistent with all picks so far. Coherent by
-    construction: every pick is drawn from a non-empty consistent subset.
+    construction: every pick is drawn from a non-empty consistent subset. Each
+    pick also carries slot_p, the unconditional probability that the same team
+    wins that bracket slot; use slot_p for UI odds.
 """
 from __future__ import annotations
 
@@ -47,8 +49,10 @@ def build_consensus(paths, bracket, known, top_k=5):
         sub = mat[consistent, col]
         idx = int(np.bincount(sub, minlength=base).argmax())
         p = float((sub == idx).mean())
+        slot_p = float((mat[:, col] == idx).mean())
         consistent &= mat[:, col] == idx
         picks.append({"slot": slot, "winner": teams[idx], "conditional_p": round(p, 4),
+                      "slot_p": round(slot_p, 4),
                       "support": int(consistent.sum()), "known": slot in known})
     return {
         "sims": n,

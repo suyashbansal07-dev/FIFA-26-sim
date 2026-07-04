@@ -100,6 +100,7 @@
   <div class="row" style="margin-bottom:6px">
     <label class="mut">half-life (days) <input id="knobHL" type="number" min="100" max="2000" step="50" style="width:75px"></label>
     <label class="mut">friendly weight <input id="knobFW" type="number" min="0" max="1" step="0.1" style="width:60px"></label>
+    <label class="mut">goal scale <input id="knobGS" type="number" min="0.8" max="1.3" step="0.05" style="width:65px"></label>
     <label class="mut">sims <select id="knobSims"><option>100000</option><option>500000</option><option>1000000</option></select></label>
     <label class="mut">sampler <select id="knobSampler"><option>antithetic</option><option>lhs</option><option>sobol</option><option>random</option></select></label>
     <button id="refreshBtn" onclick="doRefresh()">Refresh</button>
@@ -197,7 +198,8 @@ function laterNode(slot, label, picks, childSlots) {
   const kids = childSlots.map(s => picks[s] ? picks[s].winner : '?');
   const body = p
     ? `<div class="vsline">${kids.join(' vs ')}</div>
-       <div><span class="pickname">${p.winner}</span> <span class="mut">${pct(p.conditional_p)}</span>
+       <div title="Slot probability: ${pct(p.slot_p ?? p.conditional_p)}. Path-conditional support: ${pct(p.conditional_p)}.">
+       <span class="pickname">${p.winner}</span> <span class="mut">${pct(p.slot_p ?? p.conditional_p)}</span>
        ${p.known ? '<span class="badge">played</span>' : ''}</div>`
     : `<div class="vsline">${kids.join(' vs ')}</div>`;
   return `<div class="node"><div class="hd"><span>${label}</span></div>${body}</div>`;
@@ -224,7 +226,7 @@ function renderChart(consensus) {
     $('consensusLine').innerHTML = `Consensus champion: <b>${consensus.modal_champion.team}</b>
       (${pct(consensus.modal_champion.p)} of ${consensus.sims.toLocaleString()} sims) ·
       full-path joint support ${(100 * consensus.consensus_path.joint_support).toFixed(3)}% ·
-      names in green are champion-anchored conditional picks`;
+      green picks show slot probability; hover for path-conditional support`;
   }
 }
 
@@ -325,6 +327,7 @@ async function doRefresh() {
   try {
     await j('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
+                             goal_scale: +$('knobGS').value,
                              sims: +$('knobSims').value, sampler: $('knobSampler').value }) });
     PINS = {};
     await load();
@@ -368,6 +371,7 @@ async function runBacktest() {
   try {
     renderBacktest(await j('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
+                             goal_scale: +$('knobGS').value,
                              refit_days: 45, train_years: 4 }) }));
   } catch (e) { alert('backtest failed: ' + e.message); }
   b.disabled = false; b.textContent = 'Run backtest';
@@ -385,6 +389,7 @@ async function load() {
   renderRatings();
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
+  $('knobGS').value = DATA.meta.goal_scale ?? 1.1;
   $('knobSims').value = DATA.meta.sims;
   $('knobSampler').value = DATA.meta.sampler || 'antithetic';
   const opts = DATA.teams.map(t => `<option>${t}</option>`).join('');

@@ -25,7 +25,7 @@ import fetch_data
 from backtest import write_backtest
 from consensus import build_consensus
 from forward_loop import update_forward_loop
-from wc_sim import (DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
+from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
                     load_matches, markets, match_rates, run_ensemble, run_tournament,
                     shootout_rates, team_params)
 
@@ -38,14 +38,15 @@ STATE = {"payload": None, "params": None, "pens": {}, "samples": None}  # params
 LOCK = threading.Lock()
 BACKTEST_LOCK = threading.Lock()
 CFG = {"sims": DEFAULT_SIMS, "half_life": 1100.0, "friendly_weight": 1.0,
+       "goal_scale": DEFAULT_GOAL_SCALE,
        "years": 4.0, "sampler": "antithetic"}  # 1100d: sweep-validated, smallest OOS gap
 KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
-               "sims": (10_000, DEFAULT_SIMS)}
+               "goal_scale": (0.8, 1.3), "sims": (10_000, DEFAULT_SIMS)}
 
 
 def card(home, away, venue=""):
     atk, dfn, hfa, rho = STATE["params"]
-    lam, mu = match_rates(atk, dfn, hfa, home, away, venue)
+    lam, mu = match_rates(atk, dfn, hfa, home, away, venue, CFG["goal_scale"])
     g = dc_grid(lam, mu, rho)
     h, d, a, o25, top = markets(g)
     return {"home": home, "away": away, "venue": venue or "neutral",
@@ -83,10 +84,12 @@ def refresh():
         STATE["samples"] = _load_samples(df)
         if STATE["samples"]:
             probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
-                                        bracket, known, CFG["sims"], CFG["sampler"])
+                                        bracket, known, CFG["sims"], CFG["sampler"],
+                                        goal_scale=CFG["goal_scale"])
             uncertainty = {"mode": "bootstrap-ensemble", "boots": STATE["samples"]["boots"]}
         else:
-            sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
+            sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
+                            goal_scale=CFG["goal_scale"])
             probs, paths = run_tournament(sim, bracket, known, CFG["sims"], CFG["sampler"],
                                           return_paths=True)
             uncertainty = {"mode": "point-estimate"}
@@ -104,7 +107,8 @@ def refresh():
                      "teams": df["home_team"].nunique(),
                      "hfa": round(hfa, 3), "rho": round(rho, 3),
                      "sims": CFG["sims"], "half_life_days": CFG["half_life"],
-                     "friendly_weight": CFG["friendly_weight"], "sampler": CFG["sampler"],
+                     "friendly_weight": CFG["friendly_weight"], "goal_scale": CFG["goal_scale"],
+                     "sampler": CFG["sampler"],
                      "uncertainty": uncertainty,
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "fixtures": fixtures,
@@ -172,7 +176,8 @@ def api_sample():
         return jsonify({"error": "need distinct rated teams: ?home=X&away=Y[&venue=C]"}), 400
     home, away, venue = args
     atk, dfn, hfa, rho = STATE["params"]
-    sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
+    sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
+                    goal_scale=CFG["goal_scale"])
     lam, mu, flat, _ = sim.grid_for(home, away, venue)
     x, y = divmod(int(sim.rng.choice(flat.size, p=flat)), 10)
     res = {"home": home, "away": away, "home_goals": x, "away_goals": y,
@@ -187,7 +192,7 @@ def api_sample():
 
 def _apply_knobs(body):
     changed = {}
-    for k in ("half_life", "friendly_weight", "sims"):
+    for k in ("half_life", "friendly_weight", "goal_scale", "sims"):
         if k in body:
             lo, hi = KNOB_RANGES[k]
             v = min(max(float(body[k]), lo), hi)
@@ -240,9 +245,10 @@ def api_whatif():
         return jsonify({"error": f"sampler must be one of {SAMPLERS}"}), 400
     if STATE["samples"]:
         probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
-                                    bracket, known, sims, sampler)
+                                    bracket, known, sims, sampler, goal_scale=CFG["goal_scale"])
     else:
-        sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
+        sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
+                        goal_scale=CFG["goal_scale"])
         probs, paths = run_tournament(sim, bracket, known, sims, sampler, return_paths=True)
     return jsonify({"overrides": overrides, "sims": sims, "sampler": sampler,
                     "consensus": build_consensus(paths, bracket, known),
@@ -273,6 +279,7 @@ def api_run_backtest():
     try:
         half_life = _clamp(float(body.get("half_life", CFG["half_life"])), *KNOB_RANGES["half_life"])
         friendly_weight = _clamp(float(body.get("friendly_weight", CFG["friendly_weight"])), *KNOB_RANGES["friendly_weight"])
+        goal_scale = _clamp(float(body.get("goal_scale", CFG["goal_scale"])), *KNOB_RANGES["goal_scale"])
         refit_days = _clamp(int(body.get("refit_days", 45)), 7, 90)
         train_years = _clamp(float(body.get("train_years", CFG["years"])), 2.0, 6.0)
     except (TypeError, ValueError):
@@ -284,6 +291,7 @@ def api_run_backtest():
             train_years=train_years,
             half_life=half_life,
             friendly_weight=friendly_weight,
+            goal_scale=goal_scale,
             verbose=False,
         ))
 
@@ -311,7 +319,8 @@ def main():
     meta = STATE["payload"]["meta"] if loaded else {}
     if (not loaded or meta.get("sims") != CFG["sims"] or meta.get("sampler") != CFG["sampler"]
             or meta.get("half_life_days") != CFG["half_life"]
-            or meta.get("friendly_weight") != CFG["friendly_weight"]):
+            or meta.get("friendly_weight") != CFG["friendly_weight"]
+            or meta.get("goal_scale") != CFG["goal_scale"]):
         print("refreshing state (scrape + fit + simulate)...")
         refresh()
     print(f"model ready: {STATE['payload']['meta']}")

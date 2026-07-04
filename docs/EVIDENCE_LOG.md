@@ -123,3 +123,24 @@ MIT -> AGPL-3.0. The engine is deployed as a network service (Flask app);
 AGPL's network-copyleft keeps hosted derivatives open. All runtime deps are
 permissive (MIT/BSD) and AGPL-compatible; martj42 data is CC0; sole author
 relicense.
+
+## Bracket Display and Goal-Scale Repair (2026-07-05)
+
+Bug: the wallchart showed champion-anchored conditional support as if it were
+individual bracket odds. Example: after choosing Argentina as modal champion,
+the coherent path could show Morocco over France at 100.0% because that QF was
+already implied inside the path subset. Fix: `consensus.py` now emits `slot_p`
+for unconditional slot probability; `web/index.html` displays `slot_p` and
+keeps conditional support only in hover/details. The definitive champion remains
+visible.
+
+Low-score calibration check:
+
+| Half-life | Goal scale | RPS | Brier | Log-loss | 0-0 gap |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1100 | 1.00 | 0.1578 | 0.4961 | 0.8503 | not current |
+| 1100 | 1.10 | 0.1571 | 0.4949 | 0.8493 | -0.011 |
+
+Decision: use `goal_scale=1.10` by default. It improves out-of-sample RPS,
+Brier, and log-loss, and reduces the observed 0-0 overprediction without
+claiming player/lineup signals the model does not yet validate.

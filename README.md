@@ -24,14 +24,14 @@ forecast out-of-sample — wrapped in a small Flask web UI.
 - **Parameter-uncertainty ensemble** — bootstrap refits mixed into the sim so
   championship tails reflect estimation error, not false confidence.
 - **Consensus bracket** — modal champion plus a coherent champion-anchored path,
-  and the most frequent complete finishes (joint mode) across all paths.
+  individual slot odds for bracket verdicts, and most frequent complete finishes.
 - **Self-updating** — dual scrapers (martj42 bulk + ESPN same-day top-up with
   shootout winners); refresh re-scrapes, refits, and re-simulates in seconds.
 - **Evidence discipline** — walk-forward backtest with reliability bins and
   overfit gap, an append-only forward-forecast ledger scored only pre-match
   (no leakage), and a written [evidence log](docs/EVIDENCE_LOG.md).
 - **Interactive loops** — what-if winner pinning, tunable half-life / friendly
-  weight / sampler knobs, any-matchup predictor with scoreline heatmap.
+  weight / goal-scale / sampler knobs, any-matchup predictor with scoreline heatmap.
 
 ## Quickstart
 
@@ -77,7 +77,8 @@ flowchart LR
 |---|---|---|
 | Goals model | Bivariate Poisson + Dixon-Coles τ correction | low-score dependence (0-0/1-0/0-1/1-1) |
 | Ratings | attack αᵢ, defence βᵢ per team, global γ (home), ρ | spec §2.1–2.2 |
-| Time decay | exponential, half-life 550 d (sweep-validated) | momentum without starving the fit |
+| Time decay | exponential, half-life 1100 d (sweep-validated) | momentum without starving the fit |
+| Goal scale | 1.10 post-fit rate calibration | reduces low-score overconservatism out-of-sample |
 | Venue | per-match neutral flag in fit; γ only for hosts at own venue | tournament realism |
 | Knockout ties | 30-min Poisson extra time, then Beta(5,5)-shrunk historical shootout rates | principled, not a coin flip |
 | Uncertainty | bootstrap parameter ensemble mixed into sim | point MLE is overconfident |
@@ -87,6 +88,10 @@ flowchart LR
 
 | Metric | Model | Uniform | Train-freq |
 |---|---:|---:|---:|
+| RPS current calibrated (391 OOS matches, Jan-Jul 2026) | **0.1571** | 0.2360 | 0.2207 |
+| Brier current calibrated | 0.4949 | - | - |
+| Log-loss current calibrated | 0.8493 | - | - |
+| Current calibrated gap | 0.1474 in-sample -> +0.0097 OOS | - | - |
 | RPS (391 OOS matches, Jan–Jul 2026) | **0.1578** | 0.2360 | 0.2203 |
 | Brier | 0.4968 | — | — |
 | Log-loss | 0.8509 | — | — |
@@ -103,7 +108,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 | `GET /api/data` | full payload: meta, fixtures + cards, bracket probabilities, consensus, ratings |
 | `GET /api/predict?home=X&away=Y[&venue=C]` | Dixon-Coles card for any matchup |
 | `GET /api/sample?home=X&away=Y` | sample one result (ET + pens on draws) |
-| `GET /api/consensus` | modal champion, coherent path, top complete finishes |
+| `GET /api/consensus` | modal champion, slot odds, coherent path, top complete finishes |
 | `POST /api/whatif` | pin R16 winners, re-simulate the bracket |
 | `POST /api/refresh` | scrape → refit → re-simulate (accepts knob overrides) |
 | `GET/POST /api/backtest` | read / recompute walk-forward validation |
@@ -113,7 +118,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 | File | Role |
 |---|---|
 | `wc_sim.py` | model core: fit, grids, vectorized tournament sim, ensemble mixer |
-| `consensus.py` | joint-mode top paths + champion-anchored conditional bracket |
+| `consensus.py` | joint-mode top paths + definitive champion + slot probabilities |
 | `uncertainty.py` | bootstrap refits → `output/param_samples.json` |
 | `server.py` | Flask API + refresh pipeline + auto-refresh loop |
 | `web/index.html` | single-file vanilla-JS UI |

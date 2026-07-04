@@ -66,6 +66,7 @@ def record_payload_forecasts(payload, ledger_path=LEDGER, now=None):
                 "generated": payload["meta"].get("generated"),
                 "half_life_days": payload["meta"].get("half_life_days"),
                 "friendly_weight": payload["meta"].get("friendly_weight"),
+                "goal_scale": payload["meta"].get("goal_scale"),
                 "hfa": payload["meta"].get("hfa"),
                 "rho": payload["meta"].get("rho"),
             },

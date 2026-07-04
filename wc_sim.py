@@ -23,6 +23,7 @@ from scipy.stats import poisson, qmc
 ROOT = Path(__file__).parent
 MAX_GOALS = 10  # grid covers scorelines 0-0 .. 9-9 (spec 3.1)
 DEFAULT_SIMS = 1_000_000
+DEFAULT_GOAL_SCALE = 1.10
 SAMPLERS = ("random", "antithetic", "lhs", "sobol")
 
 
@@ -80,11 +81,11 @@ def team_params(model):
 
 # ---------------- inference (spec 2.1, 2.2, 3.2, 3.3) ----------------
 
-def match_rates(atk, dfn, hfa, team_a, team_b, venue_country):
+def match_rates(atk, dfn, hfa, team_a, team_b, venue_country, goal_scale=DEFAULT_GOAL_SCALE):
     """lambda/mu per spec 2.1; home advantage only when a team plays in its own country
     (hosts USA/Mexico/Canada at this WC — team names equal country names in the data)."""
-    lam = math.exp(atk[team_a] + dfn[team_b] + (hfa if team_a == venue_country else 0.0))
-    mu = math.exp(atk[team_b] + dfn[team_a] + (hfa if team_b == venue_country else 0.0))
+    lam = goal_scale * math.exp(atk[team_a] + dfn[team_b] + (hfa if team_a == venue_country else 0.0))
+    mu = goal_scale * math.exp(atk[team_b] + dfn[team_a] + (hfa if team_b == venue_country else 0.0))
     return lam, mu
 
 
@@ -118,16 +119,17 @@ def shootout_rates(shootouts: pd.DataFrame) -> dict:
 
 
 class Simulator:
-    def __init__(self, atk, dfn, hfa, rho, rng, pens=None):
+    def __init__(self, atk, dfn, hfa, rho, rng, pens=None, goal_scale=DEFAULT_GOAL_SCALE):
         self.atk, self.dfn, self.hfa, self.rho, self.rng = atk, dfn, hfa, rho, rng
         self.pens = pens or {}
+        self.goal_scale = goal_scale
         self._cache = {}
         self._advance_cache = {}
 
     def grid_for(self, a, b, venue):
         key = (a, b, venue)
         if key not in self._cache:
-            lam, mu = match_rates(self.atk, self.dfn, self.hfa, a, b, venue)
+            lam, mu = match_rates(self.atk, self.dfn, self.hfa, a, b, venue, self.goal_scale)
             g = dc_grid(lam, mu, self.rho)
             self._cache[key] = (lam, mu, g.ravel(), g)
         return self._cache[key]
@@ -242,7 +244,8 @@ def run_tournament(sim, bracket, known, n_sims, sampler="antithetic", return_pat
     return probs
 
 
-def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antithetic", seed=None):
+def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antithetic",
+                 seed=None, goal_scale=DEFAULT_GOAL_SCALE):
     """Mixture over bootstrap parameter samples (uncertainty.py): each sample simulates
     an equal share of paths, propagating estimation uncertainty into the bracket."""
     B = len(param_samples)
@@ -252,7 +255,8 @@ def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antitheti
     for ps, n in zip(param_samples, per):
         if n == 0:
             continue
-        sim = Simulator(ps["attack"], ps["defence"], ps["hfa"], ps["rho"], rng, pens=pens)
+        sim = Simulator(ps["attack"], ps["defence"], ps["hfa"], ps["rho"], rng,
+                        pens=pens, goal_scale=goal_scale)
         probs, paths = run_tournament(sim, bracket, known, n, sampler, return_paths=True)
         teams = paths["teams"]
         if all_winners is None:
@@ -289,6 +293,8 @@ def main():
     ap.add_argument("--half-life", type=float, default=1100.0,
                     help="decay half-life, days (sweep-validated: smallest OOS gap)")
     ap.add_argument("--friendly-weight", type=float, default=1.0, help="weight multiplier for friendlies")
+    ap.add_argument("--goal-scale", type=float, default=DEFAULT_GOAL_SCALE,
+                    help="multiplicative score-rate calibration (walk-forward default: 1.10)")
     ap.add_argument("--years", type=float, default=4.0, help="training window, years")
     ap.add_argument("--seed", type=int, default=26)
     args = ap.parse_args()
@@ -308,7 +314,7 @@ def main():
         print(f"known knockout results consumed: {known}")
 
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(args.seed),
-                    pens=shootout_rates(shootouts))
+                    pens=shootout_rates(shootouts), goal_scale=args.goal_scale)
     print_match_cards(sim, bracket, known)
 
     probs = run_tournament(sim, bracket, known, args.sims, args.sampler)

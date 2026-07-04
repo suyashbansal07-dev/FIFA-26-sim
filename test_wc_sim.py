@@ -37,10 +37,10 @@ def test_grid_and_markets_sum_to_one():
 
 def test_host_advantage_applies_only_at_home_venue():
     atk, dfn, hfa = {"A": 0.3, "B": 0.1}, {"A": -0.2, "B": -0.1}, 0.25
-    lam_neutral, _ = match_rates(atk, dfn, hfa, "A", "B", "Elsewhere")
-    lam_home, mu_home = match_rates(atk, dfn, hfa, "A", "B", "A")
+    lam_neutral, _ = match_rates(atk, dfn, hfa, "A", "B", "Elsewhere", goal_scale=1.0)
+    lam_home, mu_home = match_rates(atk, dfn, hfa, "A", "B", "A", goal_scale=1.0)
     assert abs(lam_home / lam_neutral - np.exp(hfa)) < 1e-12
-    _, mu_neutral = match_rates(atk, dfn, hfa, "A", "B", "Elsewhere")
+    _, mu_neutral = match_rates(atk, dfn, hfa, "A", "B", "Elsewhere", goal_scale=1.0)
     assert mu_home == mu_neutral, "away team must not get home advantage"
 
 
@@ -217,6 +217,7 @@ def test_consensus_modal_and_coherent():
     picks = {p["slot"]: p for p in c["consensus_path"]["picks"]}
     assert picks["F"]["winner"] == "A" and picks["SF-1"]["winner"] == "A"
     assert picks["R16-2"]["winner"] == "C" and picks["R16-2"]["conditional_p"] == 0.6
+    assert picks["QF-1"]["slot_p"] == 0.8
     assert picks["R16-1"]["known"] and not picks["F"]["known"]
     assert c["consensus_path"]["joint_support"] == 0.3
     top = c["top_paths"][0]
