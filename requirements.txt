@@ -1,0 +1,5 @@
+penaltyblog>=1.11
+pandas
+numpy
+scipy
+flask

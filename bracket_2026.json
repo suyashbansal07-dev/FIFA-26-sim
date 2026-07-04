@@ -1,0 +1,25 @@
+{
+  "comment": "Remaining 2026 WC bracket as of 2026-07-04 (R32 complete). Tree verified vs ESPN match schedule: QF1=W1xW2, QF2=W5xW6, QF3=W3xW4, QF4=W7xW8; SF1=QF1xQF2, SF2=QF3xQF4. venue_country drives host home-advantage. Played results are auto-read from data/matches.csv + data/shootouts.csv; use manual_results {slot_id: winner} to override if the dataset lags.",
+  "r16": [
+    {"id": "R16-1", "home": "Canada", "away": "Morocco", "venue_country": "United States", "date": "2026-07-04"},
+    {"id": "R16-2", "home": "Paraguay", "away": "France", "venue_country": "United States", "date": "2026-07-04"},
+    {"id": "R16-3", "home": "Brazil", "away": "Norway", "venue_country": "United States", "date": "2026-07-05"},
+    {"id": "R16-4", "home": "Mexico", "away": "England", "venue_country": "Mexico", "date": "2026-07-05"},
+    {"id": "R16-5", "home": "Portugal", "away": "Spain", "venue_country": "United States", "date": "2026-07-06"},
+    {"id": "R16-6", "home": "United States", "away": "Belgium", "venue_country": "United States", "date": "2026-07-06"},
+    {"id": "R16-7", "home": "Argentina", "away": "Egypt", "venue_country": "United States", "date": "2026-07-06"},
+    {"id": "R16-8", "home": "Switzerland", "away": "Colombia", "venue_country": "Canada", "date": "2026-07-06"}
+  ],
+  "qf": [
+    {"id": "QF-1", "from": ["R16-1", "R16-2"], "venue_country": "United States", "date": "2026-07-09"},
+    {"id": "QF-2", "from": ["R16-5", "R16-6"], "venue_country": "United States", "date": "2026-07-10"},
+    {"id": "QF-3", "from": ["R16-3", "R16-4"], "venue_country": "United States", "date": "2026-07-11"},
+    {"id": "QF-4", "from": ["R16-7", "R16-8"], "venue_country": "United States", "date": "2026-07-12"}
+  ],
+  "sf": [
+    {"id": "SF-1", "from": ["QF-1", "QF-2"], "venue_country": "United States", "date": "2026-07-14"},
+    {"id": "SF-2", "from": ["QF-3", "QF-4"], "venue_country": "United States", "date": "2026-07-15"}
+  ],
+  "final": {"id": "F", "from": ["SF-1", "SF-2"], "venue_country": "United States", "date": "2026-07-19"},
+  "manual_results": {}
+}

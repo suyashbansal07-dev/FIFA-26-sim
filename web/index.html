@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WC 2026 — Dixon-Coles simulator</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#6b6b6b; --line:#e3e1da; --card:#fff; --bg:#faf9f6;
+          --home:#2563eb; --draw:#b4b2a9; --away:#d85a30; --ok:#0f6e56; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.55 system-ui, "Segoe UI", sans-serif; }
+  main { max-width:980px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; font-weight:600; margin:0 0 4px; }
+  h2 { font-size:17px; font-weight:600; margin:36px 0 12px; }
+  .mut { color:var(--mut); font-size:13px; }
+  button { font:inherit; padding:6px 14px; border:1px solid var(--line); border-radius:8px;
+           background:var(--card); cursor:pointer; }
+  button:hover { border-color:#bbb; } button:disabled { opacity:.55; cursor:wait; }
+  select, input[type=number] { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:500; font-size:12.5px; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .bar { display:inline-block; height:8px; background:var(--home); border-radius:4px; vertical-align:middle; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; cursor:pointer; }
+  .card:hover { border-color:#bbb; }
+  .card h3 { margin:0 0 2px; font-size:15px; font-weight:600; }
+  .seg { display:flex; height:10px; border-radius:5px; overflow:hidden; margin:8px 0 4px; }
+  .seg div:nth-child(1){ background:var(--home);} .seg div:nth-child(2){ background:var(--draw);}
+  .seg div:nth-child(3){ background:var(--away);}
+  .badge { display:inline-block; font-size:12px; padding:1px 8px; border-radius:10px;
+           background:#e1f5ee; color:var(--ok); font-weight:500; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  #detail { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .heat td { border:none; padding:0; }
+  .heat .cell { width:34px; height:26px; font-size:11px; text-align:center; line-height:26px; color:#333; }
+  .heat .hdr { font-size:11px; color:var(--mut); text-align:center; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>World Cup 2026 — Dixon-Coles simulator</h1>
+  <div class="row" style="margin-bottom:8px">
+    <span class="mut" id="meta">loading…</span>
+  </div>
+  <div class="row" style="margin-bottom:8px">
+    <label class="mut">half-life (days) <input id="knobHL" type="number" min="100" max="2000" step="50" style="width:75px"></label>
+    <label class="mut">friendly weight <input id="knobFW" type="number" min="0" max="1" step="0.1" style="width:60px"></label>
+    <label class="mut">sims <select id="knobSims"><option>5000</option><option>10000</option><option>20000</option></select></label>
+    <button id="refreshBtn" onclick="doRefresh()">Refresh (scrape + refit + simulate)</button>
+  </div>
+
+  <h2>Championship odds <span class="mut" id="simsNote"></span>
+      <span id="whatifBadge" class="badge" hidden>what-if view</span>
+      <button id="whatifReset" hidden onclick="resetWhatif()" style="font-size:12px;padding:2px 10px">back to real odds</button></h2>
+  <table id="bracketTbl"></table>
+
+  <h2>Round of 16 <span class="mut">— pin winners, then recompute for a what-if bracket</span></h2>
+  <div class="cards" id="fixtures"></div>
+  <div class="row" style="margin-top:10px">
+    <button onclick="doWhatif()">Recompute with pinned winners</button>
+  </div>
+
+  <h2>Any matchup</h2>
+  <div class="row" style="margin-bottom:12px">
+    <select id="selHome"></select> <span class="mut">vs</span> <select id="selAway"></select>
+    <select id="selVenue"></select>
+    <button onclick="doPredict()">Predict</button>
+    <button onclick="doSample()">Sample result</button>
+    <span id="sampleOut" style="font-weight:600"></span>
+  </div>
+
+  <div id="detail" hidden></div>
+
+  <h2>Model validation <span class="mut">— walk-forward backtest, out-of-sample</span></h2>
+  <div id="backtest" class="mut">loading…</div>
+
+  <h2>Team ratings (top 30)</h2>
+  <table id="ratingsTbl"></table>
+</main>
+
+<script>
+let DATA = null;
+const $ = id => document.getElementById(id);
+const pct = v => (100 * v).toFixed(1) + '%';
+async function j(url, opts) {
+  const r = await fetch(url, opts);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || r.statusText);
+  return d;
+}
+
+function renderMeta() {
+  const m = DATA.meta;
+  $('meta').textContent = `trained on ${m.trained_matches} matches (${m.train_from} → ${m.newest_result}), ` +
+    `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
+  $('simsNote').textContent = `— ${m.sims.toLocaleString()} Monte Carlo runs of the remaining bracket`;
+}
+
+function renderBracket(bracket, whatif) {
+  const rows = bracket.map(r =>
+    `<tr><td>${r.team}</td>
+     <td class="num">${pct(r.qf)}</td><td class="num">${pct(r.sf)}</td>
+     <td class="num">${pct(r.final)}</td><td class="num">${pct(r.champion)}</td>
+     <td><span class="bar" style="width:${Math.max(2, 220 * r.champion)}px"></span></td></tr>`).join('');
+  $('bracketTbl').innerHTML =
+    `<tr><th>Team</th><th class="num">reach QF</th><th class="num">reach SF</th>
+     <th class="num">reach final</th><th class="num">champion</th><th></th></tr>` + rows;
+  $('whatifBadge').hidden = $('whatifReset').hidden = !whatif;
+}
+
+function renderFixtures() {
+  $('fixtures').innerHTML = DATA.fixtures.map((c, i) => `
+    <div class="card" onclick="showDetail(DATA.fixtures[${i}])">
+      <h3>${c.home} vs ${c.away}</h3>
+      <span class="mut">${c.date} · ${c.venue}</span>
+      ${c.played ? `<div style="margin-top:6px"><span class="badge">played — ${c.winner} advanced</span></div>` : `
+      <div class="seg"><div style="flex:${c.p_home}"></div><div style="flex:${c.p_draw}"></div><div style="flex:${c.p_away}"></div></div>
+      <span class="mut">${c.home} ${pct(c.p_home)} · draw ${pct(c.p_draw)} · ${c.away} ${pct(c.p_away)} · likely ${c.top[0].score}</span>
+      <div style="margin-top:6px" onclick="event.stopPropagation()">
+        <select class="pin" data-slot="${c.id}" style="font-size:13px;padding:3px 6px">
+          <option value="">no pin</option><option>${c.home}</option><option>${c.away}</option>
+        </select>
+      </div>`}
+    </div>`).join('');
+}
+
+function renderRatings() {
+  $('ratingsTbl').innerHTML =
+    `<tr><th>#</th><th>Team</th><th class="num">attack α</th><th class="num">defence β</th></tr>` +
+    DATA.ratings.map((r, i) =>
+      `<tr><td class="mut">${i + 1}</td><td>${r.team}</td>
+       <td class="num">${r.attack.toFixed(2)}</td><td class="num">${r.defence.toFixed(2)}</td></tr>`).join('');
+}
+
+function heatmap(c) {
+  const flat = c.grid.flat(), max = Math.max(...flat);
+  let h = '<tr><td class="hdr"></td>' + [...Array(10).keys()].map(y => `<td class="hdr">${y}</td>`).join('') + '</tr>';
+  for (let x = 0; x < 10; x++) {
+    h += `<tr><td class="hdr">${x}</td>` + c.grid[x].map((p, y) =>
+      `<td><div class="cell" title="${c.home} ${x}-${y} ${c.away}: ${pct(p)}"
+        style="background:rgba(37,99,235,${(p / max * 0.85).toFixed(3)})">${p >= 0.02 ? Math.round(p * 100) : ''}</div></td>`).join('') + '</tr>';
+  }
+  return `<table class="heat" style="width:auto">${h}</table>
+    <div class="mut">rows = ${c.home} goals, columns = ${c.away} goals; cell numbers are %</div>`;
+}
+
+function showDetail(c) {
+  $('detail').hidden = false;
+  $('detail').innerHTML = `
+    <h3 style="margin:0 0 2px">${c.home} vs ${c.away} <span class="mut">(${c.venue})</span></h3>
+    <div class="mut" style="margin-bottom:8px">λ ${c.lam} · μ ${c.mu}</div>
+    <div class="seg" style="max-width:420px"><div style="flex:${c.p_home}"></div><div style="flex:${c.p_draw}"></div><div style="flex:${c.p_away}"></div></div>
+    <div class="legend mut" style="margin-bottom:10px">
+      <i style="background:var(--home)"></i>${c.home} ${pct(c.p_home)} &nbsp;
+      <i style="background:var(--draw)"></i>draw ${pct(c.p_draw)} &nbsp;
+      <i style="background:var(--away)"></i>${c.away} ${pct(c.p_away)} &nbsp; · over 2.5 goals ${pct(c.over25)}
+      &nbsp;· top scorelines: ${c.top.map(t => `${t.score} (${pct(t.p)})`).join(', ')}</div>
+    ${heatmap(c)}`;
+  $('detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function matchupQS() {
+  const venue = $('selVenue').value;
+  return `home=${encodeURIComponent($('selHome').value)}&away=${encodeURIComponent($('selAway').value)}` +
+         (venue ? `&venue=${encodeURIComponent(venue)}` : '');
+}
+
+function syncVenue() {
+  const h = $('selHome').value, a = $('selAway').value;
+  $('selVenue').innerHTML = `<option value="">neutral venue</option>` +
+    `<option value="${h}">in ${h}</option><option value="${a}">in ${a}</option>`;
+}
+
+async function doPredict() {
+  try { showDetail(await j('/api/predict?' + matchupQS())); }
+  catch (e) { alert(e.message); }
+}
+
+async function doSample() {
+  try {
+    const s = await j('/api/sample?' + matchupQS());
+    $('sampleOut').textContent = `${s.home} ${s.home_goals} - ${s.away_goals} ${s.away}` +
+      (s.extra_time ? ` (aet ${s.extra_time}${s.pens ? `, ${s.pens} on pens` : ''})` : '');
+  } catch (e) { alert(e.message); }
+}
+
+async function doRefresh() {
+  const b = $('refreshBtn');
+  b.disabled = true; b.textContent = 'Refreshing… (scrape + refit + simulate)';
+  try {
+    await j('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
+                             sims: +$('knobSims').value }) });
+    await load();
+  } catch (e) { alert('refresh failed: ' + e.message); }
+  b.disabled = false; b.textContent = 'Refresh (scrape + refit + simulate)';
+}
+
+async function doWhatif() {
+  const overrides = {};
+  document.querySelectorAll('select.pin').forEach(s => { if (s.value) overrides[s.dataset.slot] = s.value; });
+  if (!Object.keys(overrides).length) { alert('pin at least one winner first'); return; }
+  try {
+    const r = await j('/api/whatif', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                       body: JSON.stringify({ overrides }) });
+    renderBracket(r.bracket, true);
+    $('bracketTbl').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (e) { alert(e.message); }
+}
+
+function resetWhatif() {
+  document.querySelectorAll('select.pin').forEach(s => s.value = '');
+  renderBracket(DATA.bracket, false);
+}
+
+async function loadBacktest() {
+  try {
+    const b = await j('/api/backtest');
+    const rows = b.reliability.map(r =>
+      `<tr><td>${r.bin}</td><td class="num">${pct(r.predicted)}</td>
+       <td class="num">${pct(r.observed)}</td><td class="num">${r.n}</td></tr>`).join('');
+    const gap = (b.rps - b.rps_in_sample).toFixed(4);
+    $('backtest').innerHTML =
+      `<p style="margin:0 0 8px">RPS <b>${b.rps}</b> vs uniform ${b.rps_uniform} / train-freq ${b.rps_trainfreq}
+       · Brier ${b.brier} · log-loss ${b.logloss} · ${b.n} matches since ${b.config.start}<br>
+       in-sample RPS ${b.rps_in_sample} → out-of-sample gap ${gap} (large positive = overfit)
+       · half-life ${b.config.half_life}d · friendly weight ${b.config.friendly_weight}</p>
+      <table style="max-width:480px"><tr><th>favorite prob bin</th><th class="num">predicted</th>
+       <th class="num">observed</th><th class="num">n</th></tr>${rows}</table>
+      <p>calibrated when predicted ≈ observed per bin</p>`;
+  } catch (e) { $('backtest').textContent = 'no backtest yet — run: .venv\\Scripts\\python backtest.py'; }
+}
+
+async function load() {
+  DATA = await j('/api/data');
+  renderMeta(); renderBracket(DATA.bracket, false); renderFixtures(); renderRatings();
+  $('knobHL').value = DATA.meta.half_life_days;
+  $('knobFW').value = DATA.meta.friendly_weight ?? 1;
+  $('knobSims').value = DATA.meta.sims;
+  const opts = DATA.teams.map(t => `<option>${t}</option>`).join('');
+  $('selHome').innerHTML = opts; $('selAway').innerHTML = opts;
+  $('selHome').value = 'Argentina'; $('selAway').value = 'Spain';
+  $('selHome').onchange = $('selAway').onchange = syncVenue;
+  syncVenue();
+  loadBacktest();
+}
+load();
+</script>
+</body>
+</html>
