@@ -31,6 +31,9 @@ SAMPLERS = ("random", "antithetic", "lhs", "sobol")
 def load_matches(years: float) -> pd.DataFrame:
     df = pd.read_csv(ROOT / "data" / "matches.csv", parse_dates=["date"])
     df = df.dropna(subset=["home_score", "away_score"]).copy()
+    # upstream dataset occasionally carries the same match twice with differing
+    # city spellings (e.g. Gibraltar-Cayman 2026-06-06) — one vote per match
+    df = df.drop_duplicates(subset=["date", "home_team", "away_team"], keep="first")
     df[["home_score", "away_score"]] = df[["home_score", "away_score"]].astype(int)
     cutoff = df["date"].max() - pd.Timedelta(days=round(365.25 * years))
     df = df[df["date"] >= cutoff]
@@ -283,7 +286,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--sims", type=int, default=DEFAULT_SIMS)
     ap.add_argument("--sampler", choices=SAMPLERS, default="antithetic")
-    ap.add_argument("--half-life", type=float, default=550.0, help="decay half-life, days (spec 2.3)")
+    ap.add_argument("--half-life", type=float, default=1100.0,
+                    help="decay half-life, days (sweep-validated: smallest OOS gap)")
     ap.add_argument("--friendly-weight", type=float, default=1.0, help="weight multiplier for friendlies")
     ap.add_argument("--years", type=float, default=4.0, help="training window, years")
     ap.add_argument("--seed", type=int, default=26)

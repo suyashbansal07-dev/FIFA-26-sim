@@ -37,8 +37,8 @@ app = Flask(__name__, static_folder="web", static_url_path="")
 STATE = {"payload": None, "params": None, "pens": {}, "samples": None}  # params = (atk, dfn, hfa, rho)
 LOCK = threading.Lock()
 BACKTEST_LOCK = threading.Lock()
-CFG = {"sims": DEFAULT_SIMS, "half_life": 550.0, "friendly_weight": 1.0,
-       "years": 4.0, "sampler": "antithetic"}
+CFG = {"sims": DEFAULT_SIMS, "half_life": 1100.0, "friendly_weight": 1.0,
+       "years": 4.0, "sampler": "antithetic"}  # 1100d: sweep-validated, smallest OOS gap
 KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
                "sims": (10_000, DEFAULT_SIMS)}
 

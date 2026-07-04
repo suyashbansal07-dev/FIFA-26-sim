@@ -3,71 +3,129 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WC 2026 — Dixon-Coles simulator</title>
+<title>WC26 Wallchart — Dixon-Coles simulator</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;600&display=swap" rel="stylesheet">
 <style>
-  :root { --ink:#1a1a1a; --mut:#6b6b6b; --line:#e3e1da; --card:#fff; --bg:#faf9f6;
-          --home:#2563eb; --draw:#b4b2a9; --away:#d85a30; --ok:#0f6e56; }
+  :root { --paper:#f3f1e7; --card:#fbfaf4; --ink:#20241f; --mut:#77746a; --line:#dcd7c4;
+          --pitch:#0f6132; --pitch2:#177a44; --terra:#c05a38; --draw:#aca893; --gold:#b8860b; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font:15px/1.55 system-ui, "Segoe UI", sans-serif; }
-  main { max-width:980px; margin:0 auto; padding:24px 16px 64px; }
-  h1 { font-size:22px; font-weight:600; margin:0 0 4px; }
-  h2 { font-size:17px; font-weight:600; margin:36px 0 12px; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+         font:15px/1.5 Barlow, system-ui, sans-serif; }
+  main { max-width:1020px; margin:0 auto; padding:0 16px 56px; }
+  .display { font-family:"Barlow Condensed", sans-serif; text-transform:uppercase; letter-spacing:.04em; }
+  header { background:linear-gradient(100deg, var(--pitch) 0 55%, var(--pitch2) 55% 70%, var(--pitch) 70%);
+           color:#f4f6ee; margin:0 -16px 18px; padding:20px 24px 16px; }
+  header h1 { font-family:"Barlow Condensed"; font-weight:700; text-transform:uppercase;
+              font-size:30px; letter-spacing:.06em; margin:0; }
+  header h1 small { color:#bcd9c4; font-size:15px; letter-spacing:.1em; margin-left:10px; }
+  #meta { color:#cfe3d3; font-size:12.5px; }
+  h2 { font-family:"Barlow Condensed"; font-weight:600; text-transform:uppercase;
+       letter-spacing:.05em; font-size:19px; margin:32px 0 10px;
+       border-bottom:2px solid var(--pitch); padding-bottom:3px; display:flex; gap:10px;
+       align-items:baseline; flex-wrap:wrap; }
+  h2 .mut { text-transform:none; letter-spacing:0; font-family:Barlow; font-weight:400; }
   .mut { color:var(--mut); font-size:13px; }
-  button { font:inherit; padding:6px 14px; border:1px solid var(--line); border-radius:8px;
-           background:var(--card); cursor:pointer; }
-  button:hover { border-color:#bbb; } button:disabled { opacity:.55; cursor:wait; }
-  select, input[type=number] { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+  section { animation:rise .45s ease both; }
+  section:nth-of-type(2){animation-delay:.05s} section:nth-of-type(3){animation-delay:.1s}
+  section:nth-of-type(4){animation-delay:.15s} section:nth-of-type(5){animation-delay:.2s}
+  @keyframes rise { from { opacity:0; transform:translateY(8px); } }
+  button { font:inherit; font-weight:600; padding:6px 14px; border:1.5px solid var(--pitch);
+           border-radius:6px; background:var(--card); color:var(--pitch); cursor:pointer; }
+  button:hover { background:var(--pitch); color:#fff; }
+  button:disabled { opacity:.5; cursor:wait; }
+  button.sm { font-size:12px; padding:2px 10px; }
+  select, input[type=number] { font:inherit; padding:5px 8px; border:1px solid var(--line);
+                               border-radius:6px; background:var(--card); }
   table { border-collapse:collapse; width:100%; font-size:14px; }
-  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); }
-  th { color:var(--mut); font-weight:500; font-size:12.5px; }
+  th, td { text-align:left; padding:5px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
   td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
-  .bar { display:inline-block; height:8px; background:var(--home); border-radius:4px; vertical-align:middle; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; cursor:pointer; }
-  .card:hover { border-color:#bbb; }
-  .card h3 { margin:0 0 2px; font-size:15px; font-weight:600; }
-  .seg { display:flex; height:10px; border-radius:5px; overflow:hidden; margin:8px 0 4px; }
-  .seg div:nth-child(1){ background:var(--home);} .seg div:nth-child(2){ background:var(--draw);}
-  .seg div:nth-child(3){ background:var(--away);}
-  .badge { display:inline-block; font-size:12px; padding:1px 8px; border-radius:10px;
-           background:#e1f5ee; color:var(--ok); font-weight:500; }
+  .bar { display:inline-block; height:8px; background:var(--pitch2); border-radius:4px;
+         vertical-align:middle; transition:width .5s ease; }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  #detail { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
-  .heat td { border:none; padding:0; }
-  .heat .cell { width:34px; height:26px; font-size:11px; text-align:center; line-height:26px; color:#333; }
-  .heat .hdr { font-size:11px; color:var(--mut); text-align:center; }
+  .badge { display:inline-block; font-size:11px; padding:1px 7px; border-radius:9px;
+           background:#e2eee2; color:var(--pitch); font-weight:600; }
+  .badge.gold { background:#f4ead2; color:var(--gold); }
+  /* --- bracket wallchart --- */
+  .chart-wrap { overflow-x:auto; padding-bottom:6px; }
+  .chart { display:grid; grid-template-columns:repeat(4, 1fr); gap:0 22px; min-width:760px; }
+  .round { display:flex; flex-direction:column; justify-content:space-around; gap:10px; }
+  .rlabel { font-family:"Barlow Condensed"; font-weight:600; text-transform:uppercase;
+            letter-spacing:.07em; font-size:13px; color:var(--mut); text-align:center; }
+  .duo { display:flex; flex-direction:column; justify-content:space-around; flex:1; gap:10px;
+         position:relative; }
+  .duo::after { content:''; position:absolute; right:-13px; top:25%; bottom:25%; width:11px;
+                border:2px solid var(--line); border-left:none; border-radius:0 8px 8px 0; }
+  .round:last-child .duo::after, .round:nth-last-child(1) .node::after { display:none; }
+  .node { background:var(--card); border:1px solid var(--line); border-radius:8px;
+          padding:7px 9px; font-size:13px; transition:transform .15s, border-color .15s; }
+  .node:hover { transform:translateY(-1px); border-color:var(--pitch2); }
+  .node .hd { font-size:11px; color:var(--mut); display:flex; justify-content:space-between;
+              margin-bottom:3px; cursor:pointer; }
+  .team { display:flex; justify-content:space-between; gap:8px; padding:2px 4px; border-radius:4px;
+          font-variant-numeric:tabular-nums; }
+  .team.clickable { cursor:pointer; }
+  .team.clickable:hover { background:#edf3ea; }
+  .team.pinned { background:var(--pitch); color:#fff; }
+  .team.winner { font-weight:600; color:var(--pitch); }
+  .team.out { color:var(--mut); text-decoration:line-through; }
+  .pickname { font-weight:600; color:var(--pitch); }
+  .vsline { font-size:11.5px; color:var(--mut); }
+  /* --- detail / heatmap --- */
+  #detail { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .seg { display:flex; height:10px; border-radius:5px; overflow:hidden; margin:8px 0 4px; }
+  .seg div:nth-child(1){background:var(--pitch2)} .seg div:nth-child(2){background:var(--draw)}
+  .seg div:nth-child(3){background:var(--terra)}
   .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; }
+  .heat { width:auto; } .heat td { border:none; padding:0; }
+  .heat .cell { width:32px; height:25px; font-size:11px; text-align:center; line-height:25px; }
+  .heat .hdr { font-size:11px; color:var(--mut); text-align:center; }
+  details summary { cursor:pointer; font-family:"Barlow Condensed"; font-weight:600;
+                    text-transform:uppercase; letter-spacing:.05em; font-size:19px;
+                    border-bottom:2px solid var(--pitch); padding-bottom:3px; margin:32px 0 10px; }
+  footer { margin-top:40px; font-size:12px; color:var(--mut); border-top:1px solid var(--line);
+           padding-top:10px; }
+  @media (max-width:640px){ header h1{font-size:24px} h2{font-size:17px} }
 </style>
 </head>
 <body>
 <main>
-  <h1>World Cup 2026 — Dixon-Coles simulator</h1>
-  <div class="row" style="margin-bottom:8px">
-    <span class="mut" id="meta">loading…</span>
-  </div>
-  <div class="row" style="margin-bottom:8px">
+<header>
+  <h1>WC26 Wallchart <small>Dixon-Coles tournament engine</small></h1>
+  <div id="meta">loading…</div>
+</header>
+
+<section>
+  <div class="row" style="margin-bottom:6px">
     <label class="mut">half-life (days) <input id="knobHL" type="number" min="100" max="2000" step="50" style="width:75px"></label>
     <label class="mut">friendly weight <input id="knobFW" type="number" min="0" max="1" step="0.1" style="width:60px"></label>
     <label class="mut">sims <select id="knobSims"><option>100000</option><option>500000</option><option>1000000</option></select></label>
     <label class="mut">sampler <select id="knobSampler"><option>antithetic</option><option>lhs</option><option>sobol</option><option>random</option></select></label>
-    <button id="refreshBtn" onclick="doRefresh()">Refresh (scrape + refit + simulate)</button>
+    <button id="refreshBtn" onclick="doRefresh()">Refresh</button>
+    <span class="mut" id="simsNote"></span>
   </div>
+</section>
 
-  <h2>Championship odds <span class="mut" id="simsNote"></span>
-      <span id="whatifBadge" class="badge" hidden>what-if view</span>
-      <button id="whatifReset" hidden onclick="resetWhatif()" style="font-size:12px;padding:2px 10px">back to real odds</button></h2>
+<section>
+  <h2>Bracket
+    <span class="mut">tap a team to pin a what-if winner · tap a match header for the scoreline grid</span>
+    <span id="whatifBadge" class="badge gold" hidden>what-if view</span>
+    <button id="whatifReset" class="sm" hidden onclick="resetWhatif()">back to real odds</button>
+    <button class="sm" onclick="doWhatif()">Recompute pinned</button>
+  </h2>
+  <div class="chart-wrap"><div class="chart" id="chart"></div></div>
+  <p class="mut" id="consensusLine" style="margin:8px 0 0"></p>
+</section>
+
+<section>
+  <h2>Championship odds</h2>
   <table id="bracketTbl"></table>
+  <p class="mut" style="margin:10px 0 4px">Most frequent complete finishes (joint mode):</p>
+  <table id="pathsTbl" style="max-width:560px"></table>
+</section>
 
-  <h2>Consensus bracket <span class="mut">— modal champion + coherent path across all sims</span></h2>
-  <div id="consensus" class="mut">loading…</div>
-
-  <h2>Round of 16 <span class="mut">— pin winners, then recompute for a what-if bracket</span></h2>
-  <div class="cards" id="fixtures"></div>
-  <div class="row" style="margin-top:10px">
-    <button onclick="doWhatif()">Recompute with pinned winners</button>
-  </div>
-
+<section>
   <h2>Any matchup</h2>
   <div class="row" style="margin-bottom:12px">
     <select id="selHome"></select> <span class="mut">vs</span> <select id="selAway"></select>
@@ -76,19 +134,26 @@
     <button onclick="doSample()">Sample result</button>
     <span id="sampleOut" style="font-weight:600"></span>
   </div>
-
   <div id="detail" hidden></div>
+</section>
 
-  <h2>Model validation <span class="mut">— walk-forward backtest, out-of-sample</span>
-      <button id="backtestBtn" onclick="runBacktest()" style="font-size:12px;padding:2px 10px">Run backtest</button></h2>
+<section>
+  <h2>Model validation <span class="mut">walk-forward, out-of-sample</span>
+    <button id="backtestBtn" class="sm" onclick="runBacktest()">Run backtest</button></h2>
   <div id="backtest" class="mut">loading…</div>
+</section>
 
-  <h2>Team ratings (top 30)</h2>
-  <table id="ratingsTbl"></table>
+<details>
+  <summary>Team ratings (top 30)</summary>
+  <table id="ratingsTbl" style="max-width:480px"></table>
+</details>
+
+<footer>Dixon-Coles (1997) engine · AGPL-3.0 · model output, not betting advice ·
+  data: martj42 + ESPN · <a href="https://github.com/suyashbansal07-dev/FIFA-26-sim">source</a></footer>
 </main>
 
 <script>
-let DATA = null;
+let DATA = null, PINS = {};
 const $ = id => document.getElementById(id);
 const pct = v => (100 * v).toFixed(1) + '%';
 async function j(url, opts) {
@@ -100,14 +165,79 @@ async function j(url, opts) {
 
 function renderMeta() {
   const m = DATA.meta;
-  $('meta').textContent = `trained on ${m.trained_matches} matches (${m.train_from} → ${m.newest_result}), ` +
-    `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
   const unc = m.uncertainty && m.uncertainty.mode === 'bootstrap-ensemble'
-    ? ` · parameter uncertainty: ${m.uncertainty.boots}-refit bootstrap ensemble` : '';
-  $('simsNote').textContent = `— ${m.sims.toLocaleString()} ${m.sampler || 'antithetic'} Monte Carlo runs of the remaining bracket${unc}`;
+    ? ` · ${m.uncertainty.boots}-refit bootstrap ensemble` : ' · point estimate';
+  $('meta').textContent = `${m.trained_matches} matches (${m.train_from} → ${m.newest_result}) · ` +
+    `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho}${unc} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
+  $('simsNote').textContent = `${m.sims.toLocaleString()} ${m.sampler || 'antithetic'} Monte Carlo paths`;
 }
 
-function renderBracket(bracket, whatif) {
+/* ---------- bracket wallchart ---------- */
+function treeOrder() {
+  const f = DATA.tree.final;
+  const sfs = f.from.map(id => DATA.tree.sf.find(s => s.id === id));
+  const qfs = sfs.flatMap(s => s.from.map(id => DATA.tree.qf.find(q => q.id === id)));
+  const r16 = qfs.flatMap(q => q.from.map(id => DATA.fixtures.find(x => x.id === id)));
+  return { r16, qfs, sfs, f };
+}
+
+function teamRow(fx, team, opp) {
+  const winP = team === fx.home ? fx.p_home : fx.p_away;
+  if (fx.played) {
+    const cls = fx.winner === team ? 'team winner' : 'team out';
+    return `<div class="${cls}"><span>${team}</span><span>${fx.winner === team ? '✓' : ''}</span></div>`;
+  }
+  const pin = PINS[fx.id] === team ? ' pinned' : '';
+  return `<div class="team clickable${pin}" onclick="togglePin('${fx.id}','${team}')"
+    title="pin ${team} as what-if winner"><span>${team}</span><span>${pct(winP)}</span></div>`;
+}
+
+function laterNode(slot, label, picks, childSlots) {
+  const p = picks[slot];
+  const kids = childSlots.map(s => picks[s] ? picks[s].winner : '?');
+  const body = p
+    ? `<div class="vsline">${kids.join(' vs ')}</div>
+       <div><span class="pickname">${p.winner}</span> <span class="mut">${pct(p.conditional_p)}</span>
+       ${p.known ? '<span class="badge">played</span>' : ''}</div>`
+    : `<div class="vsline">${kids.join(' vs ')}</div>`;
+  return `<div class="node"><div class="hd"><span>${label}</span></div>${body}</div>`;
+}
+
+function renderChart(consensus) {
+  const picks = Object.fromEntries((consensus ? consensus.consensus_path.picks : []).map(p => [p.slot, p]));
+  const { r16, qfs, sfs, f } = treeOrder();
+  const r16node = fx => `<div class="node">
+      <div class="hd" onclick='showDetail(DATA.fixtures.find(x => x.id === "${fx.id}"))'>
+        <span>${fx.id}</span><span>${fx.date.slice(5)} · ${fx.venue}</span></div>
+      ${teamRow(fx, fx.home)}${teamRow(fx, fx.away)}</div>`;
+  const duo = inner => `<div class="duo">${inner}</div>`;
+  $('chart').innerHTML =
+    `<div class="rlabel">Round of 16</div><div class="rlabel">Quarterfinals</div>
+     <div class="rlabel">Semifinals</div><div class="rlabel">Final</div>
+     <div class="round">${[0,2,4,6].map(i => duo(r16node(r16[i]) + r16node(r16[i+1]))).join('')}</div>
+     <div class="round">${[0,2].map(i => duo(
+        laterNode(qfs[i].id, 'Quarterfinal', picks, qfs[i].from) +
+        laterNode(qfs[i+1].id, 'Quarterfinal', picks, qfs[i+1].from))).join('')}</div>
+     <div class="round">${duo(sfs.map(s => laterNode(s.id, 'Semifinal', picks, s.from)).join(''))}</div>
+     <div class="round">${laterNode(f.id, 'Final · Jul 19', picks, f.from)}</div>`;
+  if (consensus) {
+    $('consensusLine').innerHTML = `Consensus champion: <b>${consensus.modal_champion.team}</b>
+      (${pct(consensus.modal_champion.p)} of ${consensus.sims.toLocaleString()} sims) ·
+      full-path joint support ${(100 * consensus.consensus_path.joint_support).toFixed(3)}% ·
+      names in green are champion-anchored conditional picks`;
+  }
+}
+
+function togglePin(slot, team) {
+  PINS[slot] = PINS[slot] === team ? undefined : team;
+  if (!PINS[slot]) delete PINS[slot];
+  renderChart(CURRENT.consensus);
+}
+
+/* ---------- odds + paths ---------- */
+let CURRENT = { bracket: null, consensus: null };
+function renderOdds(bracket, consensus, whatif) {
+  CURRENT = { bracket, consensus };
   const rows = bracket.map(r =>
     `<tr><td>${r.team}</td>
      <td class="num">${pct(r.qf)}</td><td class="num">${pct(r.sf)}</td>
@@ -116,55 +246,15 @@ function renderBracket(bracket, whatif) {
   $('bracketTbl').innerHTML =
     `<tr><th>Team</th><th class="num">reach QF</th><th class="num">reach SF</th>
      <th class="num">reach final</th><th class="num">champion</th><th></th></tr>` + rows;
-  $('whatifBadge').hidden = $('whatifReset').hidden = !whatif;
-}
-
-function roundName(slot) {
-  return slot === 'F' ? 'Final' : slot.startsWith('SF') ? 'Semifinal'
-       : slot.startsWith('QF') ? 'Quarterfinal' : 'Round of 16';
-}
-
-function renderConsensus(c) {
-  if (!c) { $('consensus').textContent = 'no consensus yet — refresh first'; return; }
-  const picks = [...c.consensus_path.picks].reverse();  // display R16 -> Final
-  const rows = picks.map(p =>
-    `<tr><td class="mut">${roundName(p.slot)}</td><td>${p.winner}
-       ${p.known ? '<span class="badge">played</span>' : ''}</td>
-     <td class="num">${pct(p.conditional_p)}</td>
-     <td><span class="bar" style="width:${Math.max(2, 160 * p.conditional_p)}px"></span></td></tr>`).join('');
-  const paths = c.top_paths.map((t, i) => {
-    const f = t.path['F'], sf = [t.path['SF-1'], t.path['SF-2']];
-    const runnerUp = sf[0] === f ? sf[1] : sf[0];
-    return `<tr><td class="mut">#${i + 1}</td><td>${f} beat ${runnerUp}</td>
+  const paths = (consensus ? consensus.top_paths : []).map((t, i) => {
+    const fw = t.path['F'], sf = [t.path['SF-1'], t.path['SF-2']];
+    const ru = sf[0] === fw ? sf[1] : sf[0];
+    return `<tr><td class="mut">#${i + 1}</td><td><b>${fw}</b> beat ${ru}</td>
       <td class="mut">SF: ${sf[0]}, ${sf[1]}</td><td class="num">${(100 * t.share).toFixed(2)}%</td></tr>`;
   }).join('');
-  $('consensus').innerHTML = `
-    <p style="margin:0 0 8px;color:var(--ink)">Consensus champion: <b>${c.modal_champion.team}</b>
-      (${pct(c.modal_champion.p)} of ${c.sims.toLocaleString()} sims) ·
-      full-path joint support ${(100 * c.consensus_path.joint_support).toFixed(3)}%</p>
-    <table style="max-width:560px"><tr><th>Round</th><th>Consensus winner</th>
-      <th class="num">conditional</th><th></th></tr>${rows}</table>
-    <p style="margin:10px 0 4px">Most frequent complete finishes (joint mode):</p>
-    <table style="max-width:560px"><tr><th></th><th>Final</th><th>Semifinalists</th>
-      <th class="num">share</th></tr>${paths}</table>
-    <p>conditional = winner frequency among sims consistent with all prior picks;
-       picks resolved champion-first (Final → R16), so the path is always coherent</p>`;
-}
-
-function renderFixtures() {
-  $('fixtures').innerHTML = DATA.fixtures.map((c, i) => `
-    <div class="card" onclick="showDetail(DATA.fixtures[${i}])">
-      <h3>${c.home} vs ${c.away}</h3>
-      <span class="mut">${c.date} · ${c.venue}</span>
-      ${c.played ? `<div style="margin-top:6px"><span class="badge">played — ${c.winner} advanced</span></div>` : `
-      <div class="seg"><div style="flex:${c.p_home}"></div><div style="flex:${c.p_draw}"></div><div style="flex:${c.p_away}"></div></div>
-      <span class="mut">${c.home} ${pct(c.p_home)} · draw ${pct(c.p_draw)} · ${c.away} ${pct(c.p_away)} · likely ${c.top[0].score}</span>
-      <div style="margin-top:6px" onclick="event.stopPropagation()">
-        <select class="pin" data-slot="${c.id}" style="font-size:13px;padding:3px 6px">
-          <option value="">no pin</option><option>${c.home}</option><option>${c.away}</option>
-        </select>
-      </div>`}
-    </div>`).join('');
+  $('pathsTbl').innerHTML = `<tr><th></th><th>Final</th><th>Semifinalists</th><th class="num">share</th></tr>` + paths;
+  $('whatifBadge').hidden = $('whatifReset').hidden = !whatif;
+  renderChart(consensus);
 }
 
 function renderRatings() {
@@ -175,15 +265,16 @@ function renderRatings() {
        <td class="num">${r.attack.toFixed(2)}</td><td class="num">${r.defence.toFixed(2)}</td></tr>`).join('');
 }
 
+/* ---------- match detail ---------- */
 function heatmap(c) {
   const flat = c.grid.flat(), max = Math.max(...flat);
   let h = '<tr><td class="hdr"></td>' + [...Array(10).keys()].map(y => `<td class="hdr">${y}</td>`).join('') + '</tr>';
   for (let x = 0; x < 10; x++) {
     h += `<tr><td class="hdr">${x}</td>` + c.grid[x].map((p, y) =>
       `<td><div class="cell" title="${c.home} ${x}-${y} ${c.away}: ${pct(p)}"
-        style="background:rgba(37,99,235,${(p / max * 0.85).toFixed(3)})">${p >= 0.02 ? Math.round(p * 100) : ''}</div></td>`).join('') + '</tr>';
+        style="background:rgba(15,97,50,${(p / max * 0.8).toFixed(3)})">${p >= 0.02 ? Math.round(p * 100) : ''}</div></td>`).join('') + '</tr>';
   }
-  return `<table class="heat" style="width:auto">${h}</table>
+  return `<table class="heat">${h}</table>
     <div class="mut">rows = ${c.home} goals, columns = ${c.away} goals; cell numbers are %</div>`;
 }
 
@@ -194,14 +285,15 @@ function showDetail(c) {
     <div class="mut" style="margin-bottom:8px">λ ${c.lam} · μ ${c.mu}</div>
     <div class="seg" style="max-width:420px"><div style="flex:${c.p_home}"></div><div style="flex:${c.p_draw}"></div><div style="flex:${c.p_away}"></div></div>
     <div class="legend mut" style="margin-bottom:10px">
-      <i style="background:var(--home)"></i>${c.home} ${pct(c.p_home)} &nbsp;
+      <i style="background:var(--pitch2)"></i>${c.home} ${pct(c.p_home)} &nbsp;
       <i style="background:var(--draw)"></i>draw ${pct(c.p_draw)} &nbsp;
-      <i style="background:var(--away)"></i>${c.away} ${pct(c.p_away)} &nbsp; · over 2.5 goals ${pct(c.over25)}
+      <i style="background:var(--terra)"></i>${c.away} ${pct(c.p_away)} &nbsp; · over 2.5 goals ${pct(c.over25)}
       &nbsp;· top scorelines: ${c.top.map(t => `${t.score} (${pct(t.p)})`).join(', ')}</div>
     ${heatmap(c)}`;
   $('detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+/* ---------- actions ---------- */
 function matchupQS() {
   const venue = $('selVenue').value;
   return `home=${encodeURIComponent($('selHome').value)}&away=${encodeURIComponent($('selAway').value)}` +
@@ -229,34 +321,30 @@ async function doSample() {
 
 async function doRefresh() {
   const b = $('refreshBtn');
-  b.disabled = true; b.textContent = 'Refreshing… (scrape + refit + simulate)';
+  b.disabled = true; b.textContent = 'Refreshing…';
   try {
     await j('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
                              sims: +$('knobSims').value, sampler: $('knobSampler').value }) });
+    PINS = {};
     await load();
   } catch (e) { alert('refresh failed: ' + e.message); }
-  b.disabled = false; b.textContent = 'Refresh (scrape + refit + simulate)';
+  b.disabled = false; b.textContent = 'Refresh';
 }
 
 async function doWhatif() {
-  const overrides = {};
-  document.querySelectorAll('select.pin').forEach(s => { if (s.value) overrides[s.dataset.slot] = s.value; });
-  if (!Object.keys(overrides).length) { alert('pin at least one winner first'); return; }
+  if (!Object.keys(PINS).length) { alert('pin at least one winner first (tap a team in the bracket)'); return; }
   try {
     const r = await j('/api/whatif', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                       body: JSON.stringify({ overrides, sims: +$('knobSims').value,
+                                       body: JSON.stringify({ overrides: PINS, sims: +$('knobSims').value,
                                                               sampler: $('knobSampler').value }) });
-    renderBracket(r.bracket, true);
-    renderConsensus(r.consensus);
-    $('bracketTbl').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    renderOdds(r.bracket, r.consensus, true);
   } catch (e) { alert(e.message); }
 }
 
 function resetWhatif() {
-  document.querySelectorAll('select.pin').forEach(s => s.value = '');
-  renderBracket(DATA.bracket, false);
-  renderConsensus(DATA.consensus);
+  PINS = {};
+  renderOdds(DATA.bracket, DATA.consensus, false);
 }
 
 function renderBacktest(b) {
@@ -286,15 +374,15 @@ async function runBacktest() {
 }
 
 async function loadBacktest() {
-  try {
-    renderBacktest(await j('/api/backtest'));
-  } catch (e) { $('backtest').textContent = 'no backtest yet — run: .venv\\Scripts\\python backtest.py'; }
+  try { renderBacktest(await j('/api/backtest')); }
+  catch (e) { $('backtest').textContent = 'no backtest yet — run: .venv\\Scripts\\python backtest.py'; }
 }
 
 async function load() {
   DATA = await j('/api/data');
-  renderMeta(); renderBracket(DATA.bracket, false); renderConsensus(DATA.consensus);
-  renderFixtures(); renderRatings();
+  renderMeta();
+  renderOdds(DATA.bracket, DATA.consensus, false);
+  renderRatings();
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
   $('knobSims').value = DATA.meta.sims;
