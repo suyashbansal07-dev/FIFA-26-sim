@@ -20,6 +20,7 @@ import pandas as pd
 
 from backtest import rps
 from feature_context import add_forward_safe_context, form_bucket, rest_bucket
+from match_features import attach_features, feature_coverage, load_match_features
 from wc_sim import ROOT, dc_grid, fit_model, load_matches, team_params
 
 OUT = Path(__file__).parent / "output"
@@ -145,14 +146,21 @@ def scoreline_summary(records):
     return out
 
 
-def optional_feature_coverage(root=ROOT):
-    path = root / "data" / "match_features.csv"
-    if not path.exists():
-        return {"present": False, "note": "data/match_features.csv not found; xG/stats not used"}
-    features = pd.read_csv(path)
-    cols = [c for c in ["home_xg", "away_xg", "home_shots", "away_shots", "home_sot", "away_sot"] if c in features]
-    return {"present": True, "rows": int(len(features)),
-            "coverage": {c: round(float(features[c].notna().mean()), 3) for c in cols}}
+def post_match_feature_summary(records):
+    rows = [r for r in records if r.get("has_match_features")]
+    xg_rows = [r for r in rows if pd.notna(r.get("home_xg")) and pd.notna(r.get("away_xg"))]
+    out = {"rows": len(rows), "xg_rows": len(xg_rows)}
+    if xg_rows:
+        xg_result_disagree = []
+        for r in xg_rows:
+            xg_outcome = 0 if r["home_xg"] > r["away_xg"] else 2 if r["away_xg"] > r["home_xg"] else 1
+            xg_result_disagree.append(xg_outcome != r["outcome"])
+        out.update({
+            "avg_goal_total": _mean([r["home_score"] + r["away_score"] for r in xg_rows]),
+            "avg_xg_total": _mean([r["home_xg"] + r["away_xg"] for r in xg_rows]),
+            "xg_result_disagreement": _mean(xg_result_disagree),
+        })
+    return out
 
 
 def diagnose(start="2026-01-01", refit_days=45, train_years=4.0,
@@ -162,6 +170,8 @@ def diagnose(start="2026-01-01", refit_days=45, train_years=4.0,
     confeds = infer_confederations(raw)
     records, skipped = _forecast_records(df, confeds, start, refit_days, train_years,
                                          half_life, friendly_weight, verbose)
+    features = load_match_features()
+    records = attach_features(records, features)
     teams = set(df["home_team"]) | set(df["away_team"])
     known_confed = sum(t in confeds for t in teams)
     report = {
@@ -180,7 +190,9 @@ def diagnose(start="2026-01-01", refit_days=45, train_years=4.0,
             "teams_with_confed": known_confed,
             "teams_total": len(teams),
             "confed_coverage": round(known_confed / len(teams), 3) if teams else 0,
-            "optional_match_features": optional_feature_coverage(),
+            "optional_match_features": feature_coverage(features) if not features.empty else {
+                "present": False, "note": "data/match_features.csv not found; run match_features.py"
+            },
         },
         "slices": {
             "kind": slice_summary(records, "kind"),
@@ -191,10 +203,11 @@ def diagnose(start="2026-01-01", refit_days=45, train_years=4.0,
             "form_bucket": slice_summary(records, "form_bucket"),
         },
         "scorelines": scoreline_summary(records),
+        "post_match_features": post_match_feature_summary(records),
         "notes": [
             "Confederations are inferred from confederation-specific competitions in the results data.",
             "Rest/form context is computed from earlier matches only, before each row updates team history.",
-            "Optional xG/stats are reported for coverage only and are not used unless coverage is adequate.",
+            "Optional xG/stats are post-match observations for diagnostics only; forecasts do not use them.",
         ],
     }
     OUT.mkdir(exist_ok=True)

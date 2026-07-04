@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from match_features import fetch_espn_match_features
+
 BASE = "https://raw.githubusercontent.com/martj42/international_results/master/"
 ESPN = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates={span}"
 DATA = Path(__file__).parent / "data"
@@ -87,11 +89,18 @@ def fetch(quiet=False):
             print(f"WARNING: ESPN top-up failed ({e}); continuing with bulk dataset only")
     matches.to_csv(DATA / "matches.csv", index=False)
     shootouts.to_csv(DATA / "shootouts.csv", index=False)
+    try:
+        feature_meta = fetch_espn_match_features(quiet=True)
+    except Exception as e:  # optional stats/xG must not block core result ingestion
+        feature_meta = {"error": str(e)}
+        if not quiet:
+            print(f"WARNING: ESPN match-feature fetch failed ({e}); continuing without stats/xG")
 
     played = matches.dropna(subset=["home_score"])
     wc = played[(played["tournament"] == "FIFA World Cup") & (played["date"] >= "2026-06-01")]
     meta = {"rows": len(matches), "newest_result": str(played["date"].max().date()),
-            "wc2026_played": len(wc), "espn_topup_rows": n_new}
+            "wc2026_played": len(wc), "espn_topup_rows": n_new,
+            "match_features": feature_meta}
     if not quiet:
         print(f"rows: {meta['rows']} | newest played result: {meta['newest_result']} | "
               f"WC-2026 played: {meta['wc2026_played']} | ESPN top-up: {n_new}")

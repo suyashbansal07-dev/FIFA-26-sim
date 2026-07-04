@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from backtest import rps
+from match_features import FEATURE_COLS, feature_coverage, find_match_feature, load_match_features
 from wc_sim import ROOT
 
 OUT = Path(__file__).parent / "output"
@@ -115,6 +116,7 @@ def _bins(settled):
 
 def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
     rows = _read_jsonl(ledger_path)
+    features = load_match_features()
     settled, pending, late = [], 0, 0
     for forecast in rows:
         result = _find_result(matches, forecast)
@@ -128,7 +130,7 @@ def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
             continue
         probs = np.array([forecast["p_home"], forecast["p_draw"], forecast["p_away"]])
         y, home_score, away_score = _outcome(result, forecast)
-        settled.append({
+        settled_row = {
             "forecast_id": forecast["forecast_id"],
             "fixture_id": forecast["fixture_id"],
             "home": forecast["home"],
@@ -140,7 +142,16 @@ def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
             "logloss": -math.log(max(float(probs[y]), 1e-12)),
             "favorite_pred": float(probs.max()),
             "favorite_hit": int(probs.argmax() == y),
-        })
+        }
+        feat = find_match_feature(features, forecast["match_date"], forecast["home"], forecast["away"])
+        if feat:
+            settled_row["has_match_features"] = True
+            for side in ("home", "away"):
+                for col in FEATURE_COLS:
+                    settled_row[f"{side}_{col}"] = feat.get(f"{side}_{col}")
+        else:
+            settled_row["has_match_features"] = False
+        settled.append(settled_row)
     report = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "ledger_rows": len(rows),
@@ -155,6 +166,7 @@ def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
             "favorite_observed": round(float(np.mean([r["favorite_hit"] for r in settled])), 4) if settled else None,
         },
         "reliability": _bins(settled),
+        "match_features": feature_coverage(settled),
         "settled_rows": settled,
     }
     out_path.parent.mkdir(exist_ok=True)

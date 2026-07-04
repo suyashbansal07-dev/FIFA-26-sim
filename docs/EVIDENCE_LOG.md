@@ -55,3 +55,27 @@ antithetic uniforms. LHS and Sobol samplers are available. Copulas,
 GBM/mean-reversion, importance sampling, multiprocessing, and GPU acceleration
 remain off because there is no validated correlated macro factor path or
 rare-tail payoff target in the current football model.
+
+## Match Features
+
+Command:
+
+```powershell
+.venv\Scripts\python.exe match_features.py --start 2026-06-01
+```
+
+Result:
+
+- ESPN feature rows: 88
+- xG pair coverage: 79.5%
+- shots/SOT/corners/possession/fouls coverage: 100%
+- Diagnostics joined scored rows: 54
+- Diagnostics joined xG rows: 45
+- Average joined goal total: 3.0444
+- Average joined xG total: 2.7030
+- xG/result disagreement: 35.56%
+
+Decision: use match-wise stats and xG only as post-match diagnostic evidence
+for now. They are not forecast inputs because using current-match xG before
+kickoff would leak the outcome; rolling xG calibration should wait for enough
+settled, no-leak history.

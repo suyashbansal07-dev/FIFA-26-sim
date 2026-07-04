@@ -14,10 +14,11 @@ py -3.13 -m venv .venv                      # penaltyblog has no cp314 wheels ye
 .venv\Scripts\python server.py              # http://127.0.0.1:8026
 ```
 
-First boot scrapes, fits, and simulates automatically (~15 s). The UI has a
+First boot scrapes, fits, fetches match stats/xG, and simulates automatically
+(~45 s cold, faster when xG rows are cached). The UI has a
 Refresh button; the server also auto-refreshes every 6 h (`--auto-refresh-hours`).
-CLI equivalents: `fetch_data.py`, `wc_sim.py --sims 1000000`, `backtest.py`,
-`diagnostics.py`, `forward_loop.py`, `test_wc_sim.py`.
+CLI equivalents: `fetch_data.py`, `match_features.py`, `wc_sim.py --sims 1000000`,
+`backtest.py`, `diagnostics.py`, `forward_loop.py`, `test_wc_sim.py`.
 
 Fetched CSVs in `data/` and generated files in `output/` are intentionally
 ignored by git; rerun the scripts above to rebuild them.
@@ -31,6 +32,8 @@ ignored by git; rerun the scripts above to rebuild them.
   any-matchup predictor with scoreline heatmap, sample-a-result, team ratings
 - `fetch_data.py` — scrapers: martj42/international_results bulk + ESPN scoreboard
   same-day top-up (finished games incl. shootout winners; dedup across UTC skew)
+- `match_features.py` - optional ESPN WC match-wise stat/xG ingestion to
+  `data/match_features.csv` (post-match diagnostics only; not a forecast input)
 - `wc_sim.py` — model core: penaltyblog MLE fit (`neutral_venue`-aware), grids,
   vectorized Monte Carlo, CLI report; writes `output/probabilities.csv`. Training pool is
   FIFA-competition teams only (drops CONIFA/regional sides the dataset carries)
@@ -38,11 +41,13 @@ ignored by git; rerun the scripts above to rebuild them.
   Brier / log-loss vs uniform + train-frequency baselines.
   Latest: **RPS 0.1578 vs 0.236 uniform** over 391 matches (Jan–Jul 2026)
 - `diagnostics.py` — evidence-first bias report: tournament/neutral/confed
-  slices, rest/form slices, exact-scoreline residuals, and optional xG/stats coverage
+  slices, rest/form slices, exact-scoreline residuals, optional xG/stats coverage,
+  and post-match xG/stat disagreement checks when `match_features.py` has run
 - `feature_context.py` — forward-safe rest and recent-form features derived only
   from matches played before each row
 - `forward_loop.py` — append-only forward forecast ledger and no-leakage
-  calibration loop; refresh records unplayed fixtures, later runs settle them
+  calibration loop; refresh records unplayed fixtures, later runs settle them and
+  attach post-match feature coverage where available
 - `docs/EVIDENCE_LOG.md` — bias diagnostics, repair checks, and current
   simulation-method decisions
 - `bracket_2026.json` — remaining bracket state (pairings, QF/SF tree, venues);
@@ -68,6 +73,8 @@ ignored by git; rerun the scripts above to rebuild them.
 - Knockout draws use simple proportional extra-time goals, then Beta-shrunk
   historical shootout rates.
 - No confederation multiplier; 4 years of friendlies+qualifiers connect the graph.
+- xG/stats are diagnostic only until enough no-leak historical coverage proves a
+  forward-safe calibration gain.
 - Group-stage/best-thirds simulation not implemented (tournament already past it).
 
 ## License

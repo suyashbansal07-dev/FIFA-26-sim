@@ -121,6 +121,39 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         assert settled["settled"] == 1 and settled["late_excluded"] == 1
 
 
+def test_match_feature_extracts_stats_and_xg_from_espn_shapes():
+    from match_features import attach_features, feature_row_from_event, feature_coverage
+    event = {
+        "id": "1", "date": "2026-07-04T00:00Z",
+        "status": {"type": {"name": "STATUS_FULL_TIME"}},
+        "competitions": [{"venue": {"address": {"country": "United States"}},
+                          "competitors": [
+                              {"homeAway": "home", "team": {"displayName": "United States"},
+                               "statistics": [{"name": "totalShots", "displayValue": "10"},
+                                              {"name": "shotsOnTarget", "displayValue": "4"}]},
+                              {"homeAway": "away", "team": {"displayName": "Mexico"},
+                               "statistics": [{"name": "totalShots", "displayValue": "8"},
+                                              {"name": "shotsOnTarget", "displayValue": "2"}]},
+                          ]}],
+    }
+    summary = {"leaders": [
+        {"team": {"displayName": "United States"}, "leaders": [
+            {"name": "saves", "leaders": [{"statistics": [
+                {"name": "expectedGoalsConceded", "value": 0.7}]}]}]},
+        {"team": {"displayName": "Mexico"}, "leaders": [
+            {"name": "saves", "leaders": [{"statistics": [
+                {"name": "expectedGoalsConceded", "value": 1.4}]}]}]},
+    ]}
+    row = feature_row_from_event(event, summary)
+    assert row["home_team"] == "United States" and row["away_team"] == "Mexico"
+    assert row["home_shots"] == 10 and row["away_sot"] == 2
+    assert row["home_xg"] == 1.4 and row["away_xg"] == 0.7
+    records = [{"date": "2026-07-04", "home_team": "United States", "away_team": "Mexico"}]
+    attach_features(records, pd.DataFrame([row]).assign(date=pd.Timestamp("2026-07-04")))
+    assert records[0]["has_match_features"] and records[0]["home_xg"] == 1.4
+    assert feature_coverage(records)["coverage"]["xg"] == 1.0
+
+
 def test_forward_safe_context_uses_only_prior_matches():
     from feature_context import add_forward_safe_context
     rows = pd.DataFrame({
