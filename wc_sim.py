@@ -20,6 +20,9 @@ import numpy as np
 import pandas as pd
 from scipy.stats import poisson, qmc
 
+from external_signals import (DEFAULT_EXTERNAL_WEIGHT, apply_external_prior,
+                              load_external_strength)
+
 ROOT = Path(__file__).parent
 MAX_GOALS = 10  # grid covers scorelines 0-0 .. 9-9 (spec 3.1)
 DEFAULT_SIMS = 1_000_000
@@ -81,12 +84,13 @@ def team_params(model):
 
 # ---------------- inference (spec 2.1, 2.2, 3.2, 3.3) ----------------
 
-def match_rates(atk, dfn, hfa, team_a, team_b, venue_country, goal_scale=DEFAULT_GOAL_SCALE):
+def match_rates(atk, dfn, hfa, team_a, team_b, venue_country, goal_scale=DEFAULT_GOAL_SCALE,
+                external_strength=None, external_weight=0.0):
     """lambda/mu per spec 2.1; home advantage only when a team plays in its own country
     (hosts USA/Mexico/Canada at this WC — team names equal country names in the data)."""
     lam = goal_scale * math.exp(atk[team_a] + dfn[team_b] + (hfa if team_a == venue_country else 0.0))
     mu = goal_scale * math.exp(atk[team_b] + dfn[team_a] + (hfa if team_b == venue_country else 0.0))
-    return lam, mu
+    return apply_external_prior(lam, mu, team_a, team_b, external_strength, external_weight)
 
 
 def dc_grid(lam, mu, rho, n=MAX_GOALS):
@@ -119,17 +123,21 @@ def shootout_rates(shootouts: pd.DataFrame) -> dict:
 
 
 class Simulator:
-    def __init__(self, atk, dfn, hfa, rho, rng, pens=None, goal_scale=DEFAULT_GOAL_SCALE):
+    def __init__(self, atk, dfn, hfa, rho, rng, pens=None, goal_scale=DEFAULT_GOAL_SCALE,
+                 external_strength=None, external_weight=0.0):
         self.atk, self.dfn, self.hfa, self.rho, self.rng = atk, dfn, hfa, rho, rng
         self.pens = pens or {}
         self.goal_scale = goal_scale
+        self.external_strength = external_strength or {}
+        self.external_weight = external_weight
         self._cache = {}
         self._advance_cache = {}
 
     def grid_for(self, a, b, venue):
         key = (a, b, venue)
         if key not in self._cache:
-            lam, mu = match_rates(self.atk, self.dfn, self.hfa, a, b, venue, self.goal_scale)
+            lam, mu = match_rates(self.atk, self.dfn, self.hfa, a, b, venue, self.goal_scale,
+                                  self.external_strength, self.external_weight)
             g = dc_grid(lam, mu, self.rho)
             self._cache[key] = (lam, mu, g.ravel(), g)
         return self._cache[key]
@@ -245,7 +253,8 @@ def run_tournament(sim, bracket, known, n_sims, sampler="antithetic", return_pat
 
 
 def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antithetic",
-                 seed=None, goal_scale=DEFAULT_GOAL_SCALE):
+                 seed=None, goal_scale=DEFAULT_GOAL_SCALE, external_strength=None,
+                 external_weight=0.0):
     """Mixture over bootstrap parameter samples (uncertainty.py): each sample simulates
     an equal share of paths, propagating estimation uncertainty into the bracket."""
     B = len(param_samples)
@@ -256,7 +265,8 @@ def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antitheti
         if n == 0:
             continue
         sim = Simulator(ps["attack"], ps["defence"], ps["hfa"], ps["rho"], rng,
-                        pens=pens, goal_scale=goal_scale)
+                        pens=pens, goal_scale=goal_scale,
+                        external_strength=external_strength, external_weight=external_weight)
         probs, paths = run_tournament(sim, bracket, known, n, sampler, return_paths=True)
         teams = paths["teams"]
         if all_winners is None:
@@ -295,6 +305,8 @@ def main():
     ap.add_argument("--friendly-weight", type=float, default=1.0, help="weight multiplier for friendlies")
     ap.add_argument("--goal-scale", type=float, default=DEFAULT_GOAL_SCALE,
                     help="multiplicative score-rate calibration (walk-forward default: 1.10)")
+    ap.add_argument("--external-weight", type=float, default=DEFAULT_EXTERNAL_WEIGHT,
+                    help="capped player/market prior weight (0 disables)")
     ap.add_argument("--years", type=float, default=4.0, help="training window, years")
     ap.add_argument("--seed", type=int, default=26)
     args = ap.parse_args()
@@ -312,9 +324,13 @@ def main():
     known = known_winners(bracket, df, shootouts)
     if known:
         print(f"known knockout results consumed: {known}")
+    external_strength, external_meta = load_external_strength()
+    if args.external_weight and external_strength:
+        print(f"external strength prior: {external_meta['rows']} teams, weight {args.external_weight:.3f}")
 
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(args.seed),
-                    pens=shootout_rates(shootouts), goal_scale=args.goal_scale)
+                    pens=shootout_rates(shootouts), goal_scale=args.goal_scale,
+                    external_strength=external_strength, external_weight=args.external_weight)
     print_match_cards(sim, bracket, known)
 
     probs = run_tournament(sim, bracket, known, args.sims, args.sampler)

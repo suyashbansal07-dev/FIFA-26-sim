@@ -46,7 +46,7 @@ Optional extras:
 
 ```powershell
 .venv\Scripts\python uncertainty.py --boots 16   # bootstrap ensemble (server auto-uses)
-.venv\Scripts\python external_data.py            # player/market mart -> UI
+.venv\Scripts\python external_data.py            # player/market/chemistry mart -> model + UI
 .venv\Scripts\python backtest.py                 # walk-forward validation -> UI
 .venv\Scripts\python backtest.py --sweep         # hyperparameter grid by OOS RPS
 .venv\Scripts\python test_wc_sim.py              # self-checks, no framework
@@ -60,6 +60,7 @@ flowchart LR
     B[ESPN scoreboard API] --> C
     B2[ESPN match stats / xG] --> MF[match_features.py]
     B3[Transfermarkt open dataset] --> X[external_data.py]
+    B4[FIFA world rankings] --> X
     C --> D[wc_sim.py<br/>Dixon-Coles MLE fit]
     D --> E[10x10 tau-corrected grids]
     U[uncertainty.py<br/>bootstrap refits] -.-> F
@@ -71,7 +72,8 @@ flowchart LR
     H --> J[forward_loop.py<br/>pre-match ledger, scored on results]
     K[backtest.py<br/>walk-forward RPS/Brier] --> H
     MF -.diagnostics only.-> J
-    X -.player/market context.-> H
+    X --> D
+    X --> H
 ```
 
 ### Model card
@@ -82,6 +84,7 @@ flowchart LR
 | Ratings | attack αᵢ, defence βᵢ per team, global γ (home), ρ | spec §2.1–2.2 |
 | Time decay | exponential, half-life 1100 d (sweep-validated) | momentum without starving the fit |
 | Goal scale | 1.10 post-fit rate calibration | reduces low-score overconservatism out-of-sample |
+| External prior | capped player/market/rank/chemistry rate adjustment, weight 0.12 | richer signal without letting market data dominate |
 | Venue | per-match neutral flag in fit; γ only for hosts at own venue | tournament realism |
 | Knockout ties | 30-min Poisson extra time, then Beta(5,5)-shrunk historical shootout rates | principled, not a coin flip |
 | Uncertainty | bootstrap parameter ensemble mixed into sim | point MLE is overconfident |
@@ -91,15 +94,12 @@ flowchart LR
 
 | Metric | Model | Uniform | Train-freq |
 |---|---:|---:|---:|
-| RPS current calibrated (391 OOS matches, Jan-Jul 2026) | **0.1571** | 0.2360 | 0.2207 |
-| Brier current calibrated | 0.4949 | - | - |
-| Log-loss current calibrated | 0.8493 | - | - |
-| Current calibrated gap | 0.1474 in-sample -> +0.0097 OOS | - | - |
-| RPS (391 OOS matches, Jan–Jul 2026) | **0.1578** | 0.2360 | 0.2203 |
-| Brier | 0.4968 | — | — |
-| Log-loss | 0.8509 | — | — |
+| RPS current calibrated (391 OOS matches, Jan-Jul 2026) | **0.1537** | 0.2360 | 0.2207 |
+| Brier current calibrated | 0.4884 | - | - |
+| Log-loss current calibrated | 0.8385 | - | - |
+| Current calibrated gap | 0.1459 in-sample -> +0.0078 OOS | - | - |
 
-In-sample RPS 0.1427 → out-of-sample gap +0.015 (mild, monitored). Reliability
+In-sample RPS 0.1459 -> out-of-sample gap +0.0078 (mild, monitored). Reliability
 bins and the forward ledger (first settled knockout forecast: Morocco favorite
 at 45.1%, hit) live in the UI's *Model validation* section and
 [docs/EVIDENCE_LOG.md](docs/EVIDENCE_LOG.md).
@@ -110,6 +110,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 |---|---|
 | `GET /api/data` | full payload: meta, fixtures + cards, bracket probabilities, consensus, ratings |
 | `GET /api/predict?home=X&away=Y[&venue=C]` | Dixon-Coles card for any matchup |
+| `GET /api/case?home=X&away=Y[&venue=C][&date=YYYY-MM-DD]` | case evidence: result, xG/stats, forward forecast, external prior |
 | `GET /api/sample?home=X&away=Y` | sample one result (ET + pens on draws) |
 | `GET /api/consensus` | modal champion, slot odds, coherent path, top complete finishes |
 | `POST /api/whatif` | pin R16 winners, re-simulate the bracket |
@@ -127,7 +128,8 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 | `web/index.html` | single-file vanilla-JS UI |
 | `fetch_data.py` | scrapers: martj42 bulk + ESPN top-up (shootouts, aliases, UTC skew) |
 | `match_features.py` | ESPN match stats / xG ingestion (diagnostics only, forward-safe) |
-| `external_data.py` | Transfermarkt player, national-team, and market mart (ignored output) |
+| `external_data.py` | Transfermarkt player, national-team, market, chemistry, and FIFA-rank mart (ignored output) |
+| `external_signals.py` | capped model prior from market, FIFA rank, caps/goals, and chemistry |
 | `backtest.py` | walk-forward RPS/Brier/log-loss, reliability bins, `--sweep` |
 | `forward_loop.py` | append-only forecast ledger, scored pre-match-only |
 | `diagnostics.py` | evidence-first bias reports |

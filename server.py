@@ -24,6 +24,7 @@ from flask import Flask, jsonify, request
 import fetch_data
 from backtest import write_backtest
 from consensus import build_consensus
+from external_signals import DEFAULT_EXTERNAL_WEIGHT, external_rate_adjustment, load_external_strength
 from forward_loop import update_forward_loop
 from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
                     load_matches, markets, match_rates, run_ensemble, run_tournament,
@@ -34,15 +35,21 @@ STATE_FILE = ROOT / "output" / "state.json"
 BACKTEST_FILE = ROOT / "output" / "backtest.json"
 SAMPLES_FILE = ROOT / "output" / "param_samples.json"
 EXTERNAL_DIR = ROOT / "output" / "external"
+MATCHES_FILE = ROOT / "data" / "matches.csv"
+FEATURES_FILE = ROOT / "data" / "match_features.csv"
+FORWARD_LEDGER = ROOT / "output" / "forward_forecasts.jsonl"
+FORWARD_CALIBRATION = ROOT / "output" / "forward_calibration.json"
 app = Flask(__name__, static_folder="web", static_url_path="")
-STATE = {"payload": None, "params": None, "pens": {}, "samples": None}  # params = (atk, dfn, hfa, rho)
+STATE = {"payload": None, "params": None, "pens": {}, "samples": None,
+         "external_strength": {}, "external_meta": {}}  # params = (atk, dfn, hfa, rho)
 LOCK = threading.Lock()
 BACKTEST_LOCK = threading.Lock()
 CFG = {"sims": DEFAULT_SIMS, "half_life": 1100.0, "friendly_weight": 1.0,
-       "goal_scale": DEFAULT_GOAL_SCALE,
+       "goal_scale": DEFAULT_GOAL_SCALE, "external_weight": DEFAULT_EXTERNAL_WEIGHT,
        "years": 4.0, "sampler": "antithetic"}  # 1100d: sweep-validated, smallest OOS gap
 KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
-               "goal_scale": (0.8, 1.3), "sims": (10_000, DEFAULT_SIMS)}
+               "goal_scale": (0.8, 1.3), "external_weight": (0.0, 0.15),
+               "sims": (10_000, DEFAULT_SIMS)}
 
 
 def _clean(v):
@@ -52,7 +59,19 @@ def _clean(v):
         return int(v)
     if isinstance(v, (np.floating,)):
         return float(v)
+    if isinstance(v, (np.bool_,)):
+        return bool(v)
+    if isinstance(v, pd.Timestamp):
+        return v.date().isoformat()
     return v
+
+
+def _jsonable(v):
+    if isinstance(v, dict):
+        return {k: _jsonable(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_jsonable(x) for x in v]
+    return _clean(v)
 
 
 def _load_external_payload():
@@ -64,7 +83,11 @@ def _load_external_payload():
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     keep = ["team", "confederation", "fifa_ranking", "current_nt_players",
             "top11_market_value", "top23_market_value", "squad_caps", "squad_goals",
+            "chemistry_score", "position_balance", "same_club_share",
             "fiwc_minutes", "fiwc_player_goals"]
+    for col in keep:
+        if col not in df:
+            df[col] = None
     rows = [{k: _clean(v) for k, v in row.items()} for row in df[keep].to_dict("records")]
     rows.sort(key=lambda r: r.get("top23_market_value") or 0, reverse=True)
     return {"present": True, "meta": meta, "teams": rows}
@@ -91,19 +114,183 @@ def _attach_external(payload):
         "source": external.get("meta", {}).get("source"),
         "generated": external.get("meta", {}).get("generated"),
         "include_usage": external.get("meta", {}).get("include_usage"),
+        "model_weight": CFG["external_weight"],
+        "strength_rows": len(STATE.get("external_strength") or {}),
     }
     return payload
 
 
+def _external_team(team, external=None):
+    external = external or _load_external_payload()
+    if not external.get("present"):
+        return None
+    return next((r for r in external["teams"] if r["team"] == team), None)
+
+
+def _pair_mask(df, home, away):
+    return (((df["home_team"] == home) & (df["away_team"] == away))
+            | ((df["home_team"] == away) & (df["away_team"] == home)))
+
+
+def _orient_match_row(row, home, away):
+    same = row["home_team"] == home and row["away_team"] == away
+    home_score = row["home_score"] if same else row["away_score"]
+    away_score = row["away_score"] if same else row["home_score"]
+    return {
+        "date": str(pd.Timestamp(row["date"]).date()),
+        "home": home,
+        "away": away,
+        "dataset_home": row["home_team"],
+        "dataset_away": row["away_team"],
+        "home_score": _clean(home_score),
+        "away_score": _clean(away_score),
+        "score": None if pd.isna(home_score) or pd.isna(away_score) else f"{int(home_score)}-{int(away_score)}",
+        "tournament": row.get("tournament"),
+        "neutral": _clean(row.get("neutral")),
+    }
+
+
+def _find_case_result(home, away, date=None):
+    if not MATCHES_FILE.exists():
+        return {"status": "missing", "note": "data/matches.csv not found"}
+    df = pd.read_csv(MATCHES_FILE, parse_dates=["date"])
+    hit = df[_pair_mask(df, home, away)]
+    if date:
+        day = pd.Timestamp(date)
+        hit = hit[(hit["date"] - day).abs() <= pd.Timedelta(days=2)]
+    if hit.empty:
+        return {"status": "not_found"}
+    hit = hit.sort_values("date")
+    played = hit.dropna(subset=["home_score", "away_score"])
+    row = played.iloc[-1] if not played.empty else hit.iloc[-1]
+    out = _orient_match_row(row, home, away)
+    out["status"] = "played" if out["score"] else "pending"
+    return _jsonable(out)
+
+
+def _recent_team_results(team, n=6):
+    if not MATCHES_FILE.exists():
+        return []
+    df = pd.read_csv(MATCHES_FILE, parse_dates=["date"]).dropna(subset=["home_score", "away_score"])
+    hit = df[(df["home_team"] == team) | (df["away_team"] == team)].sort_values("date").tail(n)
+    rows = []
+    for row in hit.to_dict("records"):
+        same = row["home_team"] == team
+        gf = int(row["home_score"] if same else row["away_score"])
+        ga = int(row["away_score"] if same else row["home_score"])
+        opp = row["away_team"] if same else row["home_team"]
+        rows.append({"date": str(pd.Timestamp(row["date"]).date()), "opponent": opp,
+                     "score": f"{gf}-{ga}", "venue": "home" if same else "away",
+                     "tournament": row.get("tournament")})
+    return rows
+
+
+def _read_json(path):
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def _read_jsonl(path):
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _latest_forward_case(home, away, date=None):
+    rows = [r for r in _read_jsonl(FORWARD_LEDGER)
+            if {r.get("home"), r.get("away")} == {home, away}]
+    if date:
+        rows = [r for r in rows
+                if abs((pd.Timestamp(r["match_date"]) - pd.Timestamp(date)).days) <= 2]
+    pre = [r for r in rows
+           if pd.Timestamp(r["recorded_at"]).date() <= pd.Timestamp(r["match_date"]).date()]
+    out = {"ledger_rows": len(rows), "pre_match_rows": len(pre)}
+    if pre:
+        row = sorted(pre, key=lambda r: r["recorded_at"])[-1]
+        out["latest_pre_match"] = {k: row.get(k) for k in (
+            "recorded_at", "fixture_id", "match_date", "home", "away", "venue",
+            "p_home", "p_draw", "p_away", "over25", "model")}
+    report = _read_json(FORWARD_CALIBRATION) or {}
+    settled = [r for r in report.get("settled_rows", [])
+               if {r.get("home"), r.get("away")} == {home, away}]
+    if settled:
+        out["settled"] = settled[-1]
+    return _jsonable(out)
+
+
+def _case_features(home, away, date=None):
+    if not FEATURES_FILE.exists():
+        return None
+    from match_features import find_match_feature, load_match_features
+    features = load_match_features(ROOT)
+    if features.empty:
+        return None
+    day = date or pd.Timestamp.today().date().isoformat()
+    feat = find_match_feature(features, day, home, away)
+    return _jsonable(feat) if feat else None
+
+
+def case_diagnostic(home, away, venue="", date=None):
+    c = card(home, away, venue)
+    result = _find_case_result(home, away, date)
+    day = date or result.get("date")
+    features = _case_features(home, away, day)
+    forward = _latest_forward_case(home, away, day)
+    external = _load_external_payload()
+    home_ext, away_ext = _external_team(home, external), _external_team(away, external)
+    notes = []
+    if result.get("status") == "played":
+        hs, as_ = result["home_score"], result["away_score"]
+        if hs > as_:
+            actual, current_p = home, c["p_home"]
+        elif hs == as_:
+            actual, current_p = "draw", c["p_draw"]
+        else:
+            actual, current_p = away, c["p_away"]
+        result["actual_outcome"] = actual
+        result["current_model_actual_p"] = current_p
+    elif result.get("status") == "pending":
+        notes.append("Result row exists but has no final score yet.")
+    else:
+        notes.append("No local result row found for this pair/date.")
+    if features and pd.notna(features.get("home_xg")) and pd.notna(features.get("away_xg")) and result.get("status") == "played":
+        xg_home, xg_away = features["home_xg"], features["away_xg"]
+        xg_side = home if xg_home > xg_away else away if xg_away > xg_home else "level"
+        if xg_side != result.get("actual_outcome"):
+            notes.append(f"xG leaned {xg_side}, final score leaned {result.get('actual_outcome')}.")
+    for team, ext in ((home, home_ext), (away, away_ext)):
+        if ext is None:
+            notes.append(f"No Transfermarkt national-team row for {team}.")
+    return _jsonable({
+        "card": c,
+        "result": result,
+        "forward": forward,
+        "features": features,
+        "external": {"home": home_ext, "away": away_ext},
+        "external_prior": {
+            "weight": CFG["external_weight"],
+            "home_strength": STATE.get("external_strength", {}).get(home),
+            "away_strength": STATE.get("external_strength", {}).get(away),
+            "log_rate_adjustment": round(external_rate_adjustment(
+                home, away, STATE.get("external_strength"), CFG["external_weight"]), 4),
+        },
+        "recent": {home: _recent_team_results(home), away: _recent_team_results(away)},
+        "notes": notes,
+    })
+
+
 def card(home, away, venue=""):
     atk, dfn, hfa, rho = STATE["params"]
-    lam, mu = match_rates(atk, dfn, hfa, home, away, venue, CFG["goal_scale"])
+    lam, mu = match_rates(atk, dfn, hfa, home, away, venue, CFG["goal_scale"],
+                          STATE.get("external_strength"), CFG["external_weight"])
     g = dc_grid(lam, mu, rho)
     h, d, a, o25, top = markets(g)
     return {"home": home, "away": away, "venue": venue or "neutral",
             "lam": round(lam, 3), "mu": round(mu, 3),
             "p_home": round(h, 4), "p_draw": round(d, 4), "p_away": round(a, 4),
-            "over25": round(o25, 4), "top": [{"score": s, "p": round(p, 4)} for p, s in top],
+            "over25": round(o25, 4), "external_weight": CFG["external_weight"],
+            "top": [{"score": s, "p": round(p, 4)} for p, s in top],
             "grid": [[round(v, 5) for v in row] for row in g]}
 
 
@@ -133,14 +320,19 @@ def refresh():
         STATE["pens"] = shootout_rates(shootouts)
         known = known_winners(bracket, df, shootouts)
         STATE["samples"] = _load_samples(df)
+        STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
         if STATE["samples"]:
             probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
                                         bracket, known, CFG["sims"], CFG["sampler"],
-                                        goal_scale=CFG["goal_scale"])
+                                        goal_scale=CFG["goal_scale"],
+                                        external_strength=STATE["external_strength"],
+                                        external_weight=CFG["external_weight"])
             uncertainty = {"mode": "bootstrap-ensemble", "boots": STATE["samples"]["boots"]}
         else:
             sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
-                            goal_scale=CFG["goal_scale"])
+                            goal_scale=CFG["goal_scale"],
+                            external_strength=STATE["external_strength"],
+                            external_weight=CFG["external_weight"])
             probs, paths = run_tournament(sim, bracket, known, CFG["sims"], CFG["sampler"],
                                           return_paths=True)
             uncertainty = {"mode": "point-estimate"}
@@ -159,6 +351,7 @@ def refresh():
                      "hfa": round(hfa, 3), "rho": round(rho, 3),
                      "sims": CFG["sims"], "half_life_days": CFG["half_life"],
                      "friendly_weight": CFG["friendly_weight"], "goal_scale": CFG["goal_scale"],
+                     "external_weight": CFG["external_weight"],
                      "sampler": CFG["sampler"],
                      "uncertainty": uncertainty,
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
@@ -192,6 +385,7 @@ def load_state():
         STATE["pens"] = s.get("pens", {})
         p = s["params"]
         STATE["params"] = (p["attack"], p["defence"], p["hfa"], p["rho"])
+        STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
         return True
     return False
 
@@ -209,6 +403,14 @@ def api_data():
 @app.get("/api/external")
 def api_external():
     return jsonify(_load_external_payload())
+
+
+@app.get("/api/case")
+def api_case():
+    args = _matchup_args()
+    if not args:
+        return jsonify({"error": "need distinct rated teams: ?home=X&away=Y[&venue=C][&date=YYYY-MM-DD]"}), 400
+    return jsonify(case_diagnostic(*args, date=request.args.get("date")))
 
 
 def _matchup_args():
@@ -235,7 +437,9 @@ def api_sample():
     home, away, venue = args
     atk, dfn, hfa, rho = STATE["params"]
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
-                    goal_scale=CFG["goal_scale"])
+                    goal_scale=CFG["goal_scale"],
+                    external_strength=STATE.get("external_strength"),
+                    external_weight=CFG["external_weight"])
     lam, mu, flat, _ = sim.grid_for(home, away, venue)
     x, y = divmod(int(sim.rng.choice(flat.size, p=flat)), 10)
     res = {"home": home, "away": away, "home_goals": x, "away_goals": y,
@@ -250,7 +454,7 @@ def api_sample():
 
 def _apply_knobs(body):
     changed = {}
-    for k in ("half_life", "friendly_weight", "goal_scale", "sims"):
+    for k in ("half_life", "friendly_weight", "goal_scale", "external_weight", "sims"):
         if k in body:
             lo, hi = KNOB_RANGES[k]
             v = min(max(float(body[k]), lo), hi)
@@ -303,10 +507,14 @@ def api_whatif():
         return jsonify({"error": f"sampler must be one of {SAMPLERS}"}), 400
     if STATE["samples"]:
         probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
-                                    bracket, known, sims, sampler, goal_scale=CFG["goal_scale"])
+                                    bracket, known, sims, sampler, goal_scale=CFG["goal_scale"],
+                                    external_strength=STATE.get("external_strength"),
+                                    external_weight=CFG["external_weight"])
     else:
         sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
-                        goal_scale=CFG["goal_scale"])
+                        goal_scale=CFG["goal_scale"],
+                        external_strength=STATE.get("external_strength"),
+                        external_weight=CFG["external_weight"])
         probs, paths = run_tournament(sim, bracket, known, sims, sampler, return_paths=True)
     return jsonify({"overrides": overrides, "sims": sims, "sampler": sampler,
                     "consensus": build_consensus(paths, bracket, known),
@@ -338,6 +546,7 @@ def api_run_backtest():
         half_life = _clamp(float(body.get("half_life", CFG["half_life"])), *KNOB_RANGES["half_life"])
         friendly_weight = _clamp(float(body.get("friendly_weight", CFG["friendly_weight"])), *KNOB_RANGES["friendly_weight"])
         goal_scale = _clamp(float(body.get("goal_scale", CFG["goal_scale"])), *KNOB_RANGES["goal_scale"])
+        external_weight = _clamp(float(body.get("external_weight", CFG["external_weight"])), *KNOB_RANGES["external_weight"])
         refit_days = _clamp(int(body.get("refit_days", 45)), 7, 90)
         train_years = _clamp(float(body.get("train_years", CFG["years"])), 2.0, 6.0)
     except (TypeError, ValueError):
@@ -350,6 +559,7 @@ def api_run_backtest():
             half_life=half_life,
             friendly_weight=friendly_weight,
             goal_scale=goal_scale,
+            external_weight=external_weight,
             verbose=False,
         ))
 
@@ -368,17 +578,20 @@ def main():
     ap.add_argument("--port", type=int, default=8026)
     ap.add_argument("--sims", type=int, default=DEFAULT_SIMS)
     ap.add_argument("--sampler", choices=SAMPLERS, default="antithetic")
+    ap.add_argument("--external-weight", type=float, default=DEFAULT_EXTERNAL_WEIGHT)
     ap.add_argument("--auto-refresh-hours", type=float, default=6.0)
     args = ap.parse_args()
     CFG["sims"] = args.sims
     CFG["sampler"] = args.sampler
+    CFG["external_weight"] = _clamp(args.external_weight, *KNOB_RANGES["external_weight"])
 
     loaded = load_state()
     meta = STATE["payload"]["meta"] if loaded else {}
     if (not loaded or meta.get("sims") != CFG["sims"] or meta.get("sampler") != CFG["sampler"]
             or meta.get("half_life_days") != CFG["half_life"]
             or meta.get("friendly_weight") != CFG["friendly_weight"]
-            or meta.get("goal_scale") != CFG["goal_scale"]):
+            or meta.get("goal_scale") != CFG["goal_scale"]
+            or meta.get("external_weight") != CFG["external_weight"]):
         print("refreshing state (scrape + fit + simulate)...")
         refresh()
     print(f"model ready: {STATE['payload']['meta']}")

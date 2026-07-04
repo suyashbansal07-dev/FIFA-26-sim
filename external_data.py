@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import duckdb
 from wc_sim import ROOT
 
 OUT = ROOT / "output" / "external"
+FIFA_RANKINGS = ROOT / "data" / "fifa_rankings_latest.csv"
 BASE = "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data"
 TABLES = {
     "players": f"{BASE}/players.csv.gz",
@@ -32,6 +34,17 @@ def _sql_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace("'", "''")
 
 
+def _table_path(name, out_dir):
+    cache = out_dir / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    dst = cache / f"{name}.csv.gz"
+    if not dst.exists():
+        req = urllib.request.Request(TABLES[name], headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            dst.write_bytes(r.read())
+    return _sql_path(dst)
+
+
 def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
     out_dir.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect()
@@ -40,11 +53,17 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
     except Exception:
         con.sql("LOAD httpfs;")
 
-    con.sql(f"create or replace temp view players as select * from read_csv_auto('{TABLES['players']}')")
-    con.sql(f"create or replace temp view national_teams as select * from read_csv_auto('{TABLES['national_teams']}')")
+    con.sql(f"create or replace temp view players as select * from read_csv_auto('{_table_path('players', out_dir)}')")
+    con.sql(f"create or replace temp view national_teams as select * from read_csv_auto('{_table_path('national_teams', out_dir)}')")
+    if FIFA_RANKINGS.exists():
+        con.sql(f"create or replace temp view fifa_rankings as select * from read_csv_auto('{_sql_path(FIFA_RANKINGS)}')")
+    else:
+        con.sql("create or replace temp view fifa_rankings as select null::varchar as team, null::integer as fifa_ranking")
     con.sql("""
         create or replace temp view player_rank as
-        select nt.national_team_id, nt.name as team, nt.confederation, nt.fifa_ranking,
+        select nt.national_team_id, nt.name as team, nt.confederation,
+               coalesce(fr.fifa_ranking, nt.fifa_ranking) as fifa_ranking,
+               nt.fifa_ranking as transfermarkt_fifa_ranking,
                nt.squad_size, nt.average_age, nt.total_market_value,
                p.player_id, p.name as player, p.position, p.sub_position, p.foot,
                p.height_in_cm, p.date_of_birth, p.international_caps, p.international_goals,
@@ -54,8 +73,65 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
                    order by p.market_value_in_eur desc nulls last, p.international_caps desc nulls last
                ) as market_rank
         from national_teams nt
+        left join fifa_rankings fr on fr.team = nt.name
         left join players p on p.current_national_team_id = nt.national_team_id
         where nt.last_season >= 2025
+    """)
+    con.sql("""
+        create or replace temp view player_pool as
+        select team, player_id, player, position, sub_position, foot, height_in_cm,
+               date_diff('year', try_cast(date_of_birth as date), current_date) as age,
+               international_caps, international_goals, current_club_name,
+               market_value_in_eur, market_rank,
+               case
+                   when position = 'Goalkeeper' then 'GK'
+                   when position = 'Defender' then 'DF'
+                   when position = 'Midfield' then 'MF'
+                   when position = 'Attack' then 'FW'
+                   else 'UNK'
+               end as pos_group
+        from player_rank
+        where player_id is not null and market_rank <= 23
+    """)
+    con.sql("""
+        create or replace temp view team_chemistry as
+        with counts as (
+            select team, count(*) as top23_count,
+                   sum(pos_group = 'GK') as gk_count,
+                   sum(pos_group = 'DF') as df_count,
+                   sum(pos_group = 'MF') as mf_count,
+                   sum(pos_group = 'FW') as fw_count,
+                   avg(age) as top23_avg_age,
+                   stddev_pop(age) as top23_age_std,
+                   avg(case when lower(foot) = 'left' then 1.0 else 0.0 end) as left_foot_share,
+                   count(distinct current_club_name) as distinct_clubs
+            from player_pool
+            group by team
+        ), clubs as (
+            select team, max(club_players) as max_same_club_players
+            from (
+                select team, current_club_name, count(*) as club_players
+                from player_pool
+                where current_club_name is not null
+                group by team, current_club_name
+            )
+            group by team
+        ), scored as (
+            select c.*,
+                   coalesce(cl.max_same_club_players, 1) / nullif(c.top23_count, 0) as same_club_share,
+                   0.20 * least(c.gk_count / 2.0, 1.0)
+                   + 0.30 * least(c.df_count / 6.0, 1.0)
+                   + 0.30 * least(c.mf_count / 6.0, 1.0)
+                   + 0.20 * least(c.fw_count / 4.0, 1.0) as position_balance,
+                   greatest(0.0, 1.0 - abs(coalesce(c.left_foot_share, 0.3) - 0.3) / 0.3) as foot_balance,
+                   greatest(0.0, 1.0 - least(coalesce(c.top23_age_std, 8.0), 8.0) / 8.0) as age_cohesion
+            from counts c
+            left join clubs cl using(team)
+        )
+        select *,
+               0.55 * position_balance + 0.20 * age_cohesion
+               + 0.15 * foot_balance + 0.10 * same_club_share as chemistry_score
+        from scored
     """)
     con.sql("""
         create or replace temp view team_strength as
@@ -66,16 +142,23 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
                sum(case when market_rank <= 11 then coalesce(market_value_in_eur, 0) else 0 end) as top11_market_value,
                sum(case when market_rank <= 23 then coalesce(market_value_in_eur, 0) else 0 end) as top23_market_value,
                sum(coalesce(international_caps, 0)) as squad_caps,
-               sum(coalesce(international_goals, 0)) as squad_goals
+               sum(coalesce(international_goals, 0)) as squad_goals,
+               max(tc.chemistry_score) as chemistry_score,
+               max(tc.position_balance) as position_balance,
+               max(tc.foot_balance) as foot_balance,
+               max(tc.same_club_share) as same_club_share,
+               max(tc.top23_avg_age) as top23_avg_age,
+               max(tc.top23_age_std) as top23_age_std
         from player_rank
+        left join team_chemistry tc using(team)
         group by all
     """)
     if include_usage:
-        con.sql(f"create or replace temp view games as select * from read_csv_auto('{TABLES['games']}')")
-        con.sql(f"create or replace temp view appearances as select * from read_csv_auto('{TABLES['appearances']}')")
+        con.sql(f"create or replace temp view games as select * from read_csv_auto('{_table_path('games', out_dir)}')")
+        con.sql(f"create or replace temp view appearances as select * from read_csv_auto('{_table_path('appearances', out_dir)}')")
         con.sql(
             "create or replace temp view game_lineups_raw as "
-            f"select * from read_csv_auto('{TABLES['game_lineups']}', "
+            f"select * from read_csv_auto('{_table_path('game_lineups', out_dir)}', "
             "strict_mode=false, null_padding=true, all_varchar=true)"
         )
         con.sql("""
@@ -135,11 +218,12 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         left join fiwc_2026_appearances a using(team)
         left join fiwc_2026_starts s using(team)
     """)
-    for view in ("team_strength", "fiwc_2026_appearances", "fiwc_2026_starts", "project_team_enrichment"):
+    for view in ("player_pool", "team_chemistry", "team_strength", "fiwc_2026_appearances",
+                 "fiwc_2026_starts", "project_team_enrichment"):
         con.sql(f"copy (select * from {view}) to '{_sql_path(out_dir / (view + '.csv'))}' (header, delimiter ',')")
     sample = con.sql("""
         select team, fifa_ranking, current_nt_players, top11_market_value, top23_market_value,
-               fiwc_minutes, fiwc_player_goals
+               chemistry_score, fiwc_minutes, fiwc_player_goals
         from project_team_enrichment
         order by top23_market_value desc nulls last
         limit 12
@@ -148,10 +232,13 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": "dcaribou/transfermarkt-datasets",
         "source_base": BASE,
+        "fifa_rankings": str(FIFA_RANKINGS) if FIFA_RANKINGS.exists() else None,
         "start": start,
         "include_usage": include_usage,
         "rows": {
             "team_strength": int(con.sql("select count(*) from team_strength").fetchone()[0]),
+            "player_pool": int(con.sql("select count(*) from player_pool").fetchone()[0]),
+            "team_chemistry": int(con.sql("select count(*) from team_chemistry").fetchone()[0]),
             "project_team_enrichment": int(con.sql("select count(*) from project_team_enrichment").fetchone()[0]),
             "fiwc_2026_appearances": int(con.sql("select count(*) from fiwc_2026_appearances").fetchone()[0]),
         },

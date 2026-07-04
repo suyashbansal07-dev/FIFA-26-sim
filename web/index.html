@@ -101,6 +101,7 @@
     <label class="mut">half-life (days) <input id="knobHL" type="number" min="100" max="2000" step="50" style="width:75px"></label>
     <label class="mut">friendly weight <input id="knobFW" type="number" min="0" max="1" step="0.1" style="width:60px"></label>
     <label class="mut">goal scale <input id="knobGS" type="number" min="0.8" max="1.3" step="0.05" style="width:65px"></label>
+    <label class="mut">external weight <input id="knobEW" type="number" min="0" max="0.15" step="0.01" style="width:65px"></label>
     <label class="mut">sims <select id="knobSims"><option>100000</option><option>500000</option><option>1000000</option></select></label>
     <label class="mut">sampler <select id="knobSampler"><option>antithetic</option><option>lhs</option><option>sobol</option><option>random</option></select></label>
     <button id="refreshBtn" onclick="doRefresh()">Refresh</button>
@@ -286,11 +287,12 @@ function renderExternal() {
   $('externalMeta').textContent = `${ex.teams.length} national teams · ${meta.source || 'external source'} · ${meta.generated || ''}`;
   $('externalTbl').innerHTML =
     `<tr><th>Team</th><th>Confed</th><th class="num">FIFA rank</th><th class="num">players</th>
-     <th class="num">top 11</th><th class="num">top 23</th><th class="num">caps</th><th class="num">goals</th></tr>` +
+     <th class="num">top 11</th><th class="num">top 23</th><th class="num">chem</th><th class="num">caps</th><th class="num">goals</th></tr>` +
     ex.teams.slice(0, 32).map(r =>
       `<tr><td>${r.team}</td><td>${r.confederation || '—'}</td><td class="num">${r.fifa_ranking ?? '—'}</td>
        <td class="num">${r.current_nt_players ?? '—'}</td><td class="num">${money(r.top11_market_value)}</td>
-       <td class="num">${money(r.top23_market_value)}</td><td class="num">${r.squad_caps ?? '—'}</td>
+       <td class="num">${money(r.top23_market_value)}</td><td class="num">${r.chemistry_score == null ? '—' : r.chemistry_score.toFixed(2)}</td>
+       <td class="num">${r.squad_caps ?? '—'}</td>
        <td class="num">${r.squad_goals ?? '—'}</td></tr>`).join('');
 }
 
@@ -318,8 +320,45 @@ function showDetail(c) {
       <i style="background:var(--draw)"></i>draw ${pct(c.p_draw)} &nbsp;
       <i style="background:var(--terra)"></i>${c.away} ${pct(c.p_away)} &nbsp; · over 2.5 goals ${pct(c.over25)}
       &nbsp;· top scorelines: ${c.top.map(t => `${t.score} (${pct(t.p)})`).join(', ')}</div>
-    ${heatmap(c)}`;
+    ${heatmap(c)}
+    <div id="caseEvidence" class="mut" style="margin-top:12px">loading case evidence…</div>`;
   $('detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  loadCase(c);
+}
+
+function resultLine(r) {
+  if (!r || r.status === 'not_found') return 'no local result row';
+  if (r.status === 'pending') return `${r.date || ''}: pending`;
+  return `${r.date}: ${r.home} ${r.score} ${r.away} · model actual-p ${pct(r.current_model_actual_p || 0)}`;
+}
+
+function featureLine(f) {
+  if (!f) return 'no xG/stats row';
+  const hx = f.home_xg == null ? 'n/a' : f.home_xg.toFixed(2);
+  const ax = f.away_xg == null ? 'n/a' : f.away_xg.toFixed(2);
+  return `xG ${hx}-${ax} · shots ${f.home_shots ?? 'n/a'}-${f.away_shots ?? 'n/a'} · SOT ${f.home_sot ?? 'n/a'}-${f.away_sot ?? 'n/a'}`;
+}
+
+function externalLine(c) {
+  const p = c.external_prior || {};
+  return `external prior: weight ${p.weight ?? 0}, strength ${p.home_strength ?? 'n/a'} vs ${p.away_strength ?? 'n/a'}, log-rate shift ${p.log_rate_adjustment ?? 0}`;
+}
+
+async function loadCase(c) {
+  const qs = `home=${encodeURIComponent(c.home)}&away=${encodeURIComponent(c.away)}&venue=${encodeURIComponent(c.venue || '')}` +
+             (c.date ? `&date=${encodeURIComponent(c.date)}` : '');
+  try {
+    const d = await j('/api/case?' + qs);
+    const pre = d.forward.latest_pre_match;
+    $('caseEvidence').innerHTML = `<b>Evidence</b><br>
+      ${resultLine(d.result)}<br>
+      ${pre ? `latest pre-match: ${pct(pre.p_home)} / ${pct(pre.p_draw)} / ${pct(pre.p_away)} recorded ${pre.recorded_at}<br>` : ''}
+      ${featureLine(d.features)}<br>
+      ${externalLine(d)}<br>
+      ${d.notes && d.notes.length ? d.notes.join('<br>') : ''}`;
+  } catch (e) {
+    $('caseEvidence').textContent = 'case evidence unavailable: ' + e.message;
+  }
 }
 
 /* ---------- actions ---------- */
@@ -355,6 +394,7 @@ async function doRefresh() {
     await j('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
                              goal_scale: +$('knobGS').value,
+                             external_weight: +$('knobEW').value,
                              sims: +$('knobSims').value, sampler: $('knobSampler').value }) });
     PINS = {};
     await load();
@@ -386,7 +426,8 @@ function renderBacktest(b) {
     `<p style="margin:0 0 8px">RPS <b>${b.rps}</b> vs uniform ${b.rps_uniform} / train-freq ${b.rps_trainfreq}
        · Brier ${b.brier} · log-loss ${b.logloss} · ${b.n} matches since ${b.config.start}<br>
        in-sample RPS ${b.rps_in_sample} → out-of-sample gap ${gap} (large positive = overfit)
-       · half-life ${b.config.half_life}d · friendly weight ${b.config.friendly_weight}</p>
+       · half-life ${b.config.half_life}d · friendly weight ${b.config.friendly_weight}
+       · external weight ${b.config.external_weight ?? 0}</p>
       <table style="max-width:480px"><tr><th>favorite prob bin</th><th class="num">predicted</th>
        <th class="num">observed</th><th class="num">n</th></tr>${rows}</table>
       <p>calibrated when predicted ≈ observed per bin</p>`;
@@ -399,6 +440,7 @@ async function runBacktest() {
     renderBacktest(await j('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
                              goal_scale: +$('knobGS').value,
+                             external_weight: +$('knobEW').value,
                              refit_days: 45, train_years: 4 }) }));
   } catch (e) { alert('backtest failed: ' + e.message); }
   b.disabled = false; b.textContent = 'Run backtest';
@@ -418,6 +460,7 @@ async function load() {
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
   $('knobGS').value = DATA.meta.goal_scale ?? 1.1;
+  $('knobEW').value = DATA.meta.external_weight ?? 0;
   $('knobSims').value = DATA.meta.sims;
   $('knobSampler').value = DATA.meta.sampler || 'antithetic';
   const opts = DATA.teams.map(t => `<option>${t}</option>`).join('');

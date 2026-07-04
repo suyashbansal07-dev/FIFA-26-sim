@@ -155,14 +155,34 @@ Command:
 
 Result:
 
-- Source: `dcaribou/transfermarkt-datasets`
+- Sources: `dcaribou/transfermarkt-datasets` plus FIFA world rankings override
+  from `https://www.fifa.com/en/world-rankings`
 - Generated compact ignored outputs under `output/external/`
 - `team_strength.csv`: 124 national teams
+- `player_pool.csv`: 2,852 top-23 players across national teams
+- `team_chemistry.csv`: 124 national teams
 - `project_team_enrichment.csv`: 124 national teams
 - Player/market fields now visible in `/api/data` and the web UI:
   FIFA rank, current national-team player count, top-11 market value,
-  top-23 market value, squad caps, and squad goals
+  top-23 market value, squad caps, squad goals, chemistry score, position
+  balance, and same-club share
 
-Decision: expose player/market context, but do not feed it into the model yet.
-That avoids unvalidated market-value bias while giving the model and UI a
-reproducible player-data layer.
+Decision update: feed external context into the model as a capped prior, not as
+a hard override. `external_signals.py` builds a normalized composite from
+top-23 market value, current FIFA rank, caps/goals, and chemistry. The prior
+adjusts both teams' goal rates symmetrically, capped by `MAX_RATE_ADJ=0.25`.
+
+Quick OOS check after rank/chemistry integration (`half_life=1100`,
+`goal_scale=1.10`):
+
+| External weight | RPS | Brier | Log-loss | OOS gap |
+| ---: | ---: | ---: | ---: | ---: |
+| 0.00 | 0.1571 | 0.4949 | 0.8493 | +0.0097 |
+| 0.06 | 0.1551 | 0.4910 | 0.8427 | +0.0087 |
+| 0.10 | 0.1540 | 0.4890 | 0.8394 | +0.0080 |
+| 0.12 | 0.1537 | 0.4884 | 0.8385 | +0.0078 |
+| 0.15 | 0.1532 | 0.4876 | 0.8375 | +0.0073 |
+
+Default: `external_weight=0.12`. The tested cap `0.15` scored best, but using
+a default below the cap keeps the integration from silently becoming a
+market/ranking model.

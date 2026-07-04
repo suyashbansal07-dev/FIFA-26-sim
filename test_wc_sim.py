@@ -44,6 +44,15 @@ def test_host_advantage_applies_only_at_home_venue():
     assert mu_home == mu_neutral, "away team must not get home advantage"
 
 
+def test_external_prior_moves_rates_symmetrically():
+    atk, dfn = {"A": 0.0, "B": 0.0}, {"A": 0.0, "B": 0.0}
+    base = match_rates(atk, dfn, 0.0, "A", "B", "", goal_scale=1.0)
+    shifted = match_rates(atk, dfn, 0.0, "A", "B", "", goal_scale=1.0,
+                          external_strength={"A": 1.0, "B": -1.0}, external_weight=0.05)
+    assert base == (1.0, 1.0)
+    assert shifted[0] > 1.0 and shifted[1] < 1.0
+
+
 def test_decay_weights_and_friendly_downweight():
     dates = pd.Series(pd.to_datetime(["2026-01-01", "2026-01-01", "2024-01-01"]))
     friendly = pd.Series([False, True, False])

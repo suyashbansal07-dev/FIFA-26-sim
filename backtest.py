@@ -19,7 +19,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from wc_sim import DEFAULT_GOAL_SCALE, dc_grid, fit_model, load_matches, team_params
+from external_signals import DEFAULT_EXTERNAL_WEIGHT, load_external_strength
+from wc_sim import DEFAULT_GOAL_SCALE, dc_grid, fit_model, load_matches, match_rates, team_params
 
 OUT = Path(__file__).parent / "output"
 
@@ -31,19 +32,23 @@ def rps(probs, outcome):
     return float(np.sum((c[:2] - np.cumsum(o)[:2]) ** 2) / 2)
 
 
-def outcome_probs(atk, dfn, hfa, rho, row, goal_scale=DEFAULT_GOAL_SCALE):
-    lam = goal_scale * math.exp(atk[row.home_team] + dfn[row.away_team] + (0.0 if row.neutral else hfa))
-    mu = goal_scale * math.exp(atk[row.away_team] + dfn[row.home_team])
+def outcome_probs(atk, dfn, hfa, rho, row, goal_scale=DEFAULT_GOAL_SCALE,
+                  external_strength=None, external_weight=0.0):
+    venue = "" if row.neutral else row.home_team
+    lam, mu = match_rates(atk, dfn, hfa, row.home_team, row.away_team, venue,
+                          goal_scale, external_strength, external_weight)
     g = dc_grid(lam, mu, rho)
     return np.array([np.tril(g, -1).sum(), np.trace(g), np.triu(g, 1).sum()])
 
 
-def _score_rows(rows, atk, dfn, hfa, rho, sink, goal_scale=DEFAULT_GOAL_SCALE):
+def _score_rows(rows, atk, dfn, hfa, rho, sink, goal_scale=DEFAULT_GOAL_SCALE,
+                external_strength=None, external_weight=0.0):
     for row in rows.itertuples():
         if row.home_team not in atk or row.away_team not in atk:
             sink["skipped"] += 1
             continue
-        p = outcome_probs(atk, dfn, hfa, rho, row, goal_scale)
+        p = outcome_probs(atk, dfn, hfa, rho, row, goal_scale,
+                          external_strength, external_weight)
         y = int(row.outcome)
         sink["rps"].append(rps(p, y))
         sink["brier"].append(float(np.sum((p - np.eye(3)[y]) ** 2)))
@@ -55,7 +60,8 @@ def _score_rows(rows, atk, dfn, hfa, rho, sink, goal_scale=DEFAULT_GOAL_SCALE):
 
 
 def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
-                 goal_scale=DEFAULT_GOAL_SCALE, verbose=True):
+                 goal_scale=DEFAULT_GOAL_SCALE, external_strength=None,
+                 external_weight=0.0, verbose=True):
     start, end = pd.Timestamp(start), df["date"].max()
     oos = {"rps": [], "brier": [], "logloss": [], "fav_p": [], "fav_hit": [],
            "uniform": [], "freq": [], "skipped": 0}
@@ -73,10 +79,12 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
         atk, dfn, hfa, rho = team_params(fit_model(train, half_life, friendly_weight))
         freq = train["outcome"].value_counts(normalize=True).reindex([0, 1, 2]).fillna(0).to_numpy()
         oos["_freq"] = ins["_freq"] = freq
-        _score_rows(test, atk, dfn, hfa, rho, oos, goal_scale)
+        _score_rows(test, atk, dfn, hfa, rho, oos, goal_scale,
+                    external_strength, external_weight)
         # in-sample slice: most recent train window of the same width (overfit gauge)
         _score_rows(train[train["date"] >= block - pd.Timedelta(days=refit_days)],
-                    atk, dfn, hfa, rho, ins, goal_scale)
+                    atk, dfn, hfa, rho, ins, goal_scale,
+                    external_strength, external_weight)
         if verbose:
             print(f"block {block.date()} -> {block_end.date()}: train {len(train)}, scored {len(test)}")
         block = block_end
@@ -92,7 +100,8 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
     return {
         "config": {"start": str(start.date()), "refit_days": refit_days,
                    "train_years": train_years, "half_life": half_life,
-                   "friendly_weight": friendly_weight, "goal_scale": goal_scale},
+                   "friendly_weight": friendly_weight, "goal_scale": goal_scale,
+                   "external_weight": external_weight},
         "n": len(oos["rps"]), "skipped": oos["skipped"],
         "rps": round(float(np.mean(oos["rps"])), 4),
         "rps_uniform": round(float(np.mean(oos["uniform"])), 4),
@@ -107,11 +116,16 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
 
 def write_backtest(start="2026-01-01", refit_days=45, train_years=4.0,
                    half_life=1100.0, friendly_weight=1.0,
-                   goal_scale=DEFAULT_GOAL_SCALE, verbose=True):
+                   goal_scale=DEFAULT_GOAL_SCALE, external_weight=DEFAULT_EXTERNAL_WEIGHT,
+                   verbose=True):
     df = load_matches(years=train_years + 1.5)
     df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
+    external_strength, external_meta = load_external_strength()
+    if not external_meta.get("present"):
+        external_weight = 0.0
     r = run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
-                     goal_scale, verbose)
+                     goal_scale, external_strength, external_weight, verbose)
+    r["external_prior"] = {**external_meta, "weight": external_weight}
     OUT.mkdir(exist_ok=True)
     (OUT / "backtest.json").write_text(json.dumps(r, indent=1))
     return r
@@ -125,32 +139,38 @@ def main():
     ap.add_argument("--half-life", type=float, default=1100.0)
     ap.add_argument("--friendly-weight", type=float, default=1.0)
     ap.add_argument("--goal-scale", type=float, default=DEFAULT_GOAL_SCALE)
+    ap.add_argument("--external-weight", type=float, default=DEFAULT_EXTERNAL_WEIGHT)
     ap.add_argument("--sweep", action="store_true", help="grid-search half-life x friendly weight")
     args = ap.parse_args()
 
     if args.sweep:
         df = load_matches(years=args.train_years + 1.5)
         df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
-        print("half-life | friendly-w | RPS     | logloss | in-sample RPS")
+        external_strength, _ = load_external_strength()
+        print("half-life | friendly-w | external-w | RPS     | logloss | in-sample RPS")
         best = None
         for hl in (250, 550, 1100):
             for fw in (0.3, 0.6, 1.0):
-                r = run_backtest(df, args.start, 45, args.train_years, hl, fw,
-                                 args.goal_scale, verbose=False)
-                print(f"{hl:9.0f} | {fw:10.1f} | {r['rps']:.4f}  | {r['logloss']:.4f}  | {r['rps_in_sample']:.4f}")
-                if best is None or r["rps"] < best["rps"]:
-                    best = r
+                for ew in (0.0, 0.03, 0.06, 0.10):
+                    r = run_backtest(df, args.start, 45, args.train_years, hl, fw,
+                                     args.goal_scale, external_strength, ew, verbose=False)
+                    print(f"{hl:9.0f} | {fw:10.1f} | {ew:10.2f} | {r['rps']:.4f}  | {r['logloss']:.4f}  | {r['rps_in_sample']:.4f}")
+                    if best is None or r["rps"] < best["rps"]:
+                        best = r
         c = best["config"]
         print(f"\nbest by out-of-sample RPS: half-life {c['half_life']}, "
-              f"friendly weight {c['friendly_weight']} (RPS {best['rps']})")
+              f"friendly weight {c['friendly_weight']}, external weight {c['external_weight']} "
+              f"(RPS {best['rps']})")
         return
 
     r = write_backtest(args.start, args.refit_days, args.train_years,
-                       args.half_life, args.friendly_weight, args.goal_scale)
+                       args.half_life, args.friendly_weight, args.goal_scale,
+                       args.external_weight)
     print(f"\n=== Walk-forward backtest: {r['n']} matches scored ({r['skipped']} skipped) ===")
     print(f"RPS   model {r['rps']} | uniform {r['rps_uniform']} | train-freq {r['rps_trainfreq']}   (lower better)")
     print(f"Brier {r['brier']} | log-loss {r['logloss']} | in-sample RPS {r['rps_in_sample']} "
           f"(gap {r['rps'] - r['rps_in_sample']:+.4f}; large positive = overfit)")
+    print(f"external prior weight {r['config']['external_weight']} | {r['external_prior']}")
     print("reliability (favorite):", *(f"\n  {b['bin']}: predicted {b['predicted']:.2f} "
                                        f"observed {b['observed']:.2f} (n={b['n']})" for b in r["reliability"]))
     print("\nwrote output/backtest.json")
