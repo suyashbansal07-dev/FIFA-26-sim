@@ -83,6 +83,20 @@ def test_whatif_rejects_impossible_r16_override():
     assert err and "R16-1" in err[0] and "Canada" in err[0]
 
 
+def test_confederation_inference_uses_competition_evidence():
+    from diagnostics import infer_confederations
+    rows = pd.DataFrame({
+        "home_team": ["France", "United States"],
+        "away_team": ["Spain", "Mexico"],
+        "home_score": [1, 2],
+        "away_score": [0, 1],
+        "tournament": ["UEFA Nations League", "CONCACAF Gold Cup"],
+    })
+    meta = infer_confederations(rows)
+    assert meta["France"]["confed"] == "UEFA"
+    assert meta["Mexico"]["confed"] == "CONCACAF"
+
+
 def test_stronger_team_advances_more():
     atk = {"Strong": 0.8, "Weak": -0.8}
     dfn = {"Strong": -0.5, "Weak": 0.5}
