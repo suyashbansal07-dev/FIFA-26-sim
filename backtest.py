@@ -104,6 +104,16 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
     }
 
 
+def write_backtest(start="2026-01-01", refit_days=45, train_years=4.0,
+                   half_life=550.0, friendly_weight=1.0, verbose=True):
+    df = load_matches(years=train_years + 1.5)
+    df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
+    r = run_backtest(df, start, refit_days, train_years, half_life, friendly_weight, verbose)
+    OUT.mkdir(exist_ok=True)
+    (OUT / "backtest.json").write_text(json.dumps(r, indent=1))
+    return r
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--start", default="2026-01-01")
@@ -114,10 +124,9 @@ def main():
     ap.add_argument("--sweep", action="store_true", help="grid-search half-life x friendly weight")
     args = ap.parse_args()
 
-    df = load_matches(years=args.train_years + 1.5)
-    df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
-
     if args.sweep:
+        df = load_matches(years=args.train_years + 1.5)
+        df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
         print("half-life | friendly-w | RPS     | logloss | in-sample RPS")
         best = None
         for hl in (250, 550, 1100):
@@ -131,16 +140,14 @@ def main():
               f"friendly weight {c['friendly_weight']} (RPS {best['rps']})")
         return
 
-    r = run_backtest(df, args.start, args.refit_days, args.train_years,
-                     args.half_life, args.friendly_weight)
+    r = write_backtest(args.start, args.refit_days, args.train_years,
+                       args.half_life, args.friendly_weight)
     print(f"\n=== Walk-forward backtest: {r['n']} matches scored ({r['skipped']} skipped) ===")
     print(f"RPS   model {r['rps']} | uniform {r['rps_uniform']} | train-freq {r['rps_trainfreq']}   (lower better)")
     print(f"Brier {r['brier']} | log-loss {r['logloss']} | in-sample RPS {r['rps_in_sample']} "
           f"(gap {r['rps'] - r['rps_in_sample']:+.4f}; large positive = overfit)")
     print("reliability (favorite):", *(f"\n  {b['bin']}: predicted {b['predicted']:.2f} "
                                        f"observed {b['observed']:.2f} (n={b['n']})" for b in r["reliability"]))
-    OUT.mkdir(exist_ok=True)
-    (OUT / "backtest.json").write_text(json.dumps(r, indent=1))
     print("\nwrote output/backtest.json")
 
 

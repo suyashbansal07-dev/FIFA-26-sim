@@ -75,7 +75,8 @@
 
   <div id="detail" hidden></div>
 
-  <h2>Model validation <span class="mut">— walk-forward backtest, out-of-sample</span></h2>
+  <h2>Model validation <span class="mut">— walk-forward backtest, out-of-sample</span>
+      <button id="backtestBtn" onclick="runBacktest()" style="font-size:12px;padding:2px 10px">Run backtest</button></h2>
   <div id="backtest" class="mut">loading…</div>
 
   <h2>Team ratings (top 30)</h2>
@@ -217,21 +218,35 @@ function resetWhatif() {
   renderBracket(DATA.bracket, false);
 }
 
-async function loadBacktest() {
-  try {
-    const b = await j('/api/backtest');
-    const rows = b.reliability.map(r =>
+function renderBacktest(b) {
+  const rows = b.reliability.map(r =>
       `<tr><td>${r.bin}</td><td class="num">${pct(r.predicted)}</td>
        <td class="num">${pct(r.observed)}</td><td class="num">${r.n}</td></tr>`).join('');
-    const gap = (b.rps - b.rps_in_sample).toFixed(4);
-    $('backtest').innerHTML =
-      `<p style="margin:0 0 8px">RPS <b>${b.rps}</b> vs uniform ${b.rps_uniform} / train-freq ${b.rps_trainfreq}
+  const gap = (b.rps - b.rps_in_sample).toFixed(4);
+  $('backtest').innerHTML =
+    `<p style="margin:0 0 8px">RPS <b>${b.rps}</b> vs uniform ${b.rps_uniform} / train-freq ${b.rps_trainfreq}
        · Brier ${b.brier} · log-loss ${b.logloss} · ${b.n} matches since ${b.config.start}<br>
        in-sample RPS ${b.rps_in_sample} → out-of-sample gap ${gap} (large positive = overfit)
        · half-life ${b.config.half_life}d · friendly weight ${b.config.friendly_weight}</p>
       <table style="max-width:480px"><tr><th>favorite prob bin</th><th class="num">predicted</th>
        <th class="num">observed</th><th class="num">n</th></tr>${rows}</table>
       <p>calibrated when predicted ≈ observed per bin</p>`;
+}
+
+async function runBacktest() {
+  const b = $('backtestBtn');
+  b.disabled = true; b.textContent = 'Running…';
+  try {
+    renderBacktest(await j('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
+                             refit_days: 45, train_years: 4 }) }));
+  } catch (e) { alert('backtest failed: ' + e.message); }
+  b.disabled = false; b.textContent = 'Run backtest';
+}
+
+async function loadBacktest() {
+  try {
+    renderBacktest(await j('/api/backtest'));
   } catch (e) { $('backtest').textContent = 'no backtest yet — run: .venv\\Scripts\\python backtest.py'; }
 }
 

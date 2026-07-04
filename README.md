@@ -26,7 +26,7 @@ ignored by git; rerun the scripts above to rebuild them.
 
 - `server.py` — Flask: web UI, `/api/data`, `/api/predict?home=X&away=Y[&venue=C]`,
   `/api/sample` (draws resolve to pens), `POST /api/refresh` (scrape → refit → re-sim,
-  ~13 s), auto-refresh loop, state persisted to `output/state.json`
+  ~13 s), `GET/POST /api/backtest`, auto-refresh loop, state persisted to `output/state.json`
 - `web/index.html` — vanilla single-file UI: championship odds, R16 match cards,
   any-matchup predictor with scoreline heatmap, sample-a-result, team ratings
 - `fetch_data.py` — scrapers: martj42/international_results bulk + ESPN scoreboard

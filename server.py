@@ -8,6 +8,7 @@ Endpoints:
   GET  /api/predict    ?home=X&away=Y[&venue=C]  Dixon-Coles card for any matchup
   GET  /api/sample     same args; sample one scoreline (pens flag on draws)
   POST /api/refresh    scrape latest results -> refit -> re-simulate
+  GET/POST /api/backtest  read or recompute walk-forward validation
 """
 import argparse
 import json
@@ -21,6 +22,7 @@ import pandas as pd
 from flask import Flask, jsonify, request
 
 import fetch_data
+from backtest import write_backtest
 from wc_sim import (Simulator, dc_grid, fit_model, known_winners, load_matches,
                     markets, match_rates, run_tournament, shootout_rates, team_params)
 
@@ -30,6 +32,7 @@ BACKTEST_FILE = ROOT / "output" / "backtest.json"
 app = Flask(__name__, static_folder="web", static_url_path="")
 STATE = {"payload": None, "params": None, "pens": {}}  # params = (atk, dfn, hfa, rho)
 LOCK = threading.Lock()
+BACKTEST_LOCK = threading.Lock()
 CFG = {"sims": 10_000, "half_life": 550.0, "friendly_weight": 1.0, "years": 4.0}
 KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0), "sims": (1000, 50000)}
 
@@ -163,6 +166,21 @@ def _apply_knobs(body):
     return changed
 
 
+def _clamp(v, lo, hi):
+    return min(max(v, lo), hi)
+
+
+def _validate_overrides(bracket, overrides):
+    slots = {fx["id"]: {fx["home"], fx["away"]} for fx in bracket["r16"]}
+    errors = []
+    for slot, winner in overrides.items():
+        if slot not in slots:
+            errors.append(f"{slot} is not pinnable")
+        elif winner not in slots[slot]:
+            errors.append(f"{slot} winner must be one of {sorted(slots[slot])}")
+    return errors
+
+
 @app.post("/api/refresh")
 def api_refresh():
     _apply_knobs(request.get_json(force=True, silent=True) or {})
@@ -179,6 +197,9 @@ def api_whatif():
     if bad:
         return jsonify({"error": f"unknown teams: {bad}"}), 400
     bracket = json.loads((ROOT / "bracket_2026.json").read_text())
+    errors = _validate_overrides(bracket, overrides)
+    if errors:
+        return jsonify({"error": "; ".join(errors)}), 400
     known = {**STATE["payload"]["known"], **overrides}
     sims = min(int(body.get("sims", 5000)), 20000)
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
@@ -194,6 +215,27 @@ def api_backtest():
     if not BACKTEST_FILE.exists():
         return jsonify({"error": "no backtest yet - run backtest.py"}), 404
     return jsonify(json.loads(BACKTEST_FILE.read_text()))
+
+
+@app.post("/api/backtest")
+def api_run_backtest():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        half_life = _clamp(float(body.get("half_life", CFG["half_life"])), *KNOB_RANGES["half_life"])
+        friendly_weight = _clamp(float(body.get("friendly_weight", CFG["friendly_weight"])), *KNOB_RANGES["friendly_weight"])
+        refit_days = _clamp(int(body.get("refit_days", 45)), 7, 90)
+        train_years = _clamp(float(body.get("train_years", CFG["years"])), 2.0, 6.0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid backtest parameters"}), 400
+    with BACKTEST_LOCK:
+        return jsonify(write_backtest(
+            start=body.get("start", "2026-01-01"),
+            refit_days=refit_days,
+            train_years=train_years,
+            half_life=half_life,
+            friendly_weight=friendly_weight,
+            verbose=False,
+        ))
 
 
 def auto_refresh_loop(hours):

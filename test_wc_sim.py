@@ -75,6 +75,14 @@ def test_rps_known_values():
     assert rps(good, 0) < rps(bad, 0), "RPS must reward the sharper forecast"
 
 
+def test_whatif_rejects_impossible_r16_override():
+    from server import _validate_overrides
+    bracket = {"r16": [{"id": "R16-1", "home": "Canada", "away": "Morocco"}]}
+    assert _validate_overrides(bracket, {"R16-1": "Canada"}) == []
+    err = _validate_overrides(bracket, {"R16-1": "Brazil"})
+    assert err and "R16-1" in err[0] and "Canada" in err[0]
+
+
 def test_stronger_team_advances_more():
     atk = {"Strong": 0.8, "Weak": -0.8}
     dfn = {"Strong": -0.5, "Weak": 0.5}
