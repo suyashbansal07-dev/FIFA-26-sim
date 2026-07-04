@@ -158,10 +158,12 @@ Result:
 - Sources: `dcaribou/transfermarkt-datasets` plus FIFA world rankings override
   from `https://www.fifa.com/en/world-rankings`
 - Generated compact ignored outputs under `output/external/`
-- `team_strength.csv`: 124 national teams
+- `team_strength.csv`: 124 Transfermarkt national-team rows before rank-only
+  fallbacks
 - `player_pool.csv`: 2,852 top-23 players across national teams
 - `team_chemistry.csv`: 124 national teams
-- `project_team_enrichment.csv`: 124 national teams
+- `project_team_enrichment.csv`: 124 Transfermarkt national-team rows before
+  rank-only fallbacks
 - Player/market fields now visible in `/api/data` and the web UI:
   FIFA rank, current national-team player count, top-11 market value,
   top-23 market value, squad caps, squad goals, chemistry score, position
@@ -186,3 +188,20 @@ Quick OOS check after rank/chemistry integration (`half_life=1100`,
 Default: `external_weight=0.12`. The tested cap `0.15` scored best, but using
 a default below the cap keeps the integration from silently becoming a
 market/ranking model.
+
+Update: teams present in FIFA rankings but absent from the Transfermarkt
+national-team roster are now added as rank-only fallback rows. Cape Verde is
+the first live example: FIFA's Cabo Verde detail page reports rank 67 on the
+11 June 2026 update, while the Transfermarkt national-team table has no Cape
+Verde/Cabo Verde row. The mart therefore keeps Cape Verde's player, market,
+caps, goals, and chemistry fields null, and `external_signals.py` gives missing
+components neutral zero z-score contribution instead of imputing a fake average
+squad. Regenerated rows: `team_strength=125`,
+`fifa_only_team_strength=1`, `project_team_enrichment=125`.
+
+Backtest after fallback remains stable:
+
+- RPS `0.1537`
+- Brier `0.4884`
+- Log-loss `0.8385`
+- In-sample RPS `0.1460`, OOS gap `+0.0077`

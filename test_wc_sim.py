@@ -53,6 +53,23 @@ def test_external_prior_moves_rates_symmetrically():
     assert shifted[0] > 1.0 and shifted[1] < 1.0
 
 
+def test_external_strength_uses_rank_only_fallback_without_fake_player_data():
+    from external_signals import build_external_strength
+    rows = pd.DataFrame([
+        {"team": "A", "top23_market_value": 1_000_000_000, "fifa_ranking": 1,
+         "squad_caps": 1000, "squad_goals": 200, "chemistry_score": 0.8},
+        {"team": "B", "top23_market_value": 100_000_000, "fifa_ranking": 100,
+         "squad_caps": 200, "squad_goals": 20, "chemistry_score": 0.5},
+        {"team": "Cape Verde", "top23_market_value": np.nan, "fifa_ranking": 67,
+         "squad_caps": np.nan, "squad_goals": np.nan, "chemistry_score": np.nan},
+    ])
+    strength = build_external_strength(rows)
+    assert set(strength) == {"A", "B", "Cape Verde"}
+    assert strength["A"] > strength["B"]
+    assert np.isfinite(strength["Cape Verde"])
+    assert strength["B"] < strength["Cape Verde"] < strength["A"]
+
+
 def test_decay_weights_and_friendly_downweight():
     dates = pd.Series(pd.to_datetime(["2026-01-01", "2026-01-01", "2024-01-01"]))
     friendly = pd.Series([False, True, False])

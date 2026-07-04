@@ -14,16 +14,20 @@ MAX_RATE_ADJ = 0.25
 
 def _z(values):
     s = pd.Series(values, dtype="float64").replace([np.inf, -np.inf], np.nan)
-    if s.notna().sum() < 2:
+    observed = s.dropna()
+    if len(observed) < 2:
         return pd.Series(np.zeros(len(s)), index=s.index)
-    filled = s.fillna(s.median())
-    std = filled.std(ddof=0)
+    std = observed.std(ddof=0)
     if not std:
         return pd.Series(np.zeros(len(s)), index=s.index)
-    return (filled - filled.mean()) / std
+    return ((s - observed.mean()) / std).fillna(0.0)
 
 
 def build_external_strength(df: pd.DataFrame):
+    df = df.copy()
+    for col in ("top23_market_value", "fifa_ranking", "squad_caps", "squad_goals", "chemistry_score"):
+        if col in df:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     market = _z(np.log1p(df["top23_market_value"].clip(lower=0)))
     rank = _z(-np.log(df["fifa_ranking"].clip(lower=1)))
     caps = _z(np.log1p(df["squad_caps"].clip(lower=0)))
@@ -31,7 +35,7 @@ def build_external_strength(df: pd.DataFrame):
     chemistry = _z(df["chemistry_score"]) if "chemistry_score" in df else 0.0
     raw = 0.52 * market + 0.25 * rank + 0.10 * caps + 0.05 * goals + 0.08 * chemistry
     strength = raw.clip(-2.5, 2.5)
-    return {team: round(float(v), 4) for team, v in zip(df["team"], strength)}
+    return {team: round(float(v), 4) for team, v in zip(df["team"], strength) if pd.notna(team)}
 
 
 def load_external_strength(path=ROOT / "output" / "external" / "project_team_enrichment.csv"):

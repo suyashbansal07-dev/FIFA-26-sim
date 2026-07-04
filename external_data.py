@@ -56,9 +56,17 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
     con.sql(f"create or replace temp view players as select * from read_csv_auto('{_table_path('players', out_dir)}')")
     con.sql(f"create or replace temp view national_teams as select * from read_csv_auto('{_table_path('national_teams', out_dir)}')")
     if FIFA_RANKINGS.exists():
-        con.sql(f"create or replace temp view fifa_rankings as select * from read_csv_auto('{_sql_path(FIFA_RANKINGS)}')")
+        con.sql(f"""
+            create or replace temp view fifa_rankings as
+            select team, fifa_ranking, source_date, source
+            from read_csv_auto('{_sql_path(FIFA_RANKINGS)}')
+        """)
     else:
-        con.sql("create or replace temp view fifa_rankings as select null::varchar as team, null::integer as fifa_ranking")
+        con.sql("""
+            create or replace temp view fifa_rankings as
+            select null::varchar as team, null::integer as fifa_ranking,
+                   null::varchar as source_date, null::varchar as source
+        """)
     con.sql("""
         create or replace temp view player_rank as
         select nt.national_team_id, nt.name as team, nt.confederation,
@@ -134,7 +142,7 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         from scored
     """)
     con.sql("""
-        create or replace temp view team_strength as
+        create or replace temp view team_strength_base as
         select team, confederation, fifa_ranking, squad_size, average_age,
                max(total_market_value) as tm_total_market_value,
                count(player_id) as current_nt_players,
@@ -152,6 +160,32 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         from player_rank
         left join team_chemistry tc using(team)
         group by all
+    """)
+    con.sql("""
+        create or replace temp view team_strength as
+        select * from team_strength_base
+        union all
+        select fr.team,
+               null::varchar as confederation,
+               fr.fifa_ranking,
+               null::integer as squad_size,
+               null::double as average_age,
+               null::double as tm_total_market_value,
+               null::bigint as current_nt_players,
+               null::double as listed_market_value,
+               null::double as top11_market_value,
+               null::double as top23_market_value,
+               null::double as squad_caps,
+               null::double as squad_goals,
+               null::double as chemistry_score,
+               null::double as position_balance,
+               null::double as foot_balance,
+               null::double as same_club_share,
+               null::double as top23_avg_age,
+               null::double as top23_age_std
+        from fifa_rankings fr
+        left join team_strength_base ts on lower(ts.team) = lower(fr.team)
+        where fr.team is not null and ts.team is null
     """)
     if include_usage:
         con.sql(f"create or replace temp view games as select * from read_csv_auto('{_table_path('games', out_dir)}')")
@@ -230,13 +264,17 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
     """).fetchdf()
     meta = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "source": "dcaribou/transfermarkt-datasets",
+        "source": "dcaribou/transfermarkt-datasets + FIFA rankings override",
         "source_base": BASE,
         "fifa_rankings": str(FIFA_RANKINGS) if FIFA_RANKINGS.exists() else None,
         "start": start,
         "include_usage": include_usage,
         "rows": {
             "team_strength": int(con.sql("select count(*) from team_strength").fetchone()[0]),
+            "fifa_only_team_strength": int(con.sql("""
+                select count(*) from team_strength ts
+                where ts.current_nt_players is null and ts.fifa_ranking is not null
+            """).fetchone()[0]),
             "player_pool": int(con.sql("select count(*) from player_pool").fetchone()[0]),
             "team_chemistry": int(con.sql("select count(*) from team_chemistry").fetchone()[0]),
             "project_team_enrichment": int(con.sql("select count(*) from project_team_enrichment").fetchone()[0]),

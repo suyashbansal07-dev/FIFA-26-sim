@@ -97,9 +97,9 @@ flowchart LR
 | RPS current calibrated (391 OOS matches, Jan-Jul 2026) | **0.1537** | 0.2360 | 0.2207 |
 | Brier current calibrated | 0.4884 | - | - |
 | Log-loss current calibrated | 0.8385 | - | - |
-| Current calibrated gap | 0.1459 in-sample -> +0.0078 OOS | - | - |
+| Current calibrated gap | 0.1460 in-sample -> +0.0077 OOS | - | - |
 
-In-sample RPS 0.1459 -> out-of-sample gap +0.0078 (mild, monitored). Reliability
+In-sample RPS 0.1460 -> out-of-sample gap +0.0077 (mild, monitored). Reliability
 bins and the forward ledger (first settled knockout forecast: Morocco favorite
 at 45.1%, hit) live in the UI's *Model validation* section and
 [docs/EVIDENCE_LOG.md](docs/EVIDENCE_LOG.md).
