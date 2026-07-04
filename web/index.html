@@ -122,6 +122,12 @@
 </section>
 
 <section>
+  <h2>Static model bracket <span class="mut">definitive R16 to QF output from the loaded model state</span></h2>
+  <table id="staticBracketTbl"></table>
+  <p class="mut" id="staticBracketNote" style="margin:8px 0 0"></p>
+</section>
+
+<section>
   <h2>Championship odds</h2>
   <table id="bracketTbl"></table>
   <p class="mut" style="margin:10px 0 4px">Most frequent complete finishes (joint mode):</p>
@@ -268,6 +274,26 @@ function renderOdds(bracket, consensus, whatif) {
   $('pathsTbl').innerHTML = `<tr><th></th><th>Final</th><th>Semifinalists</th><th class="num">share</th></tr>` + paths;
   $('whatifBadge').hidden = $('whatifReset').hidden = !whatif;
   renderChart(consensus);
+}
+
+function renderStaticBracket() {
+  const picks = Object.fromEntries((DATA.consensus?.consensus_path?.picks || []).map(p => [p.slot, p]));
+  const r16Rows = DATA.fixtures.map(fx => {
+    const p = picks[fx.id] || {};
+    const winner = fx.played ? fx.winner : p.winner;
+    const support = fx.played ? 'played' : pct(p.slot_p ?? p.conditional_p ?? 0);
+    return `<tr><td>R16</td><td>${fx.id}</td><td>${fx.home} vs ${fx.away}</td><td><b>${winner}</b></td><td class="num">${support}</td></tr>`;
+  });
+  const qfRows = DATA.tree.qf.map(fx => {
+    const p = picks[fx.id] || {};
+    const teams = fx.from.map(id => (picks[id] || {}).winner || '?').join(' vs ');
+    return `<tr><td>QF</td><td>${fx.id}</td><td>${teams}</td><td><b>${p.winner || '?'}</b></td><td class="num">${pct(p.slot_p ?? p.conditional_p ?? 0)}</td></tr>`;
+  });
+  $('staticBracketTbl').innerHTML =
+    `<tr><th>Round</th><th>Slot</th><th>Matchup</th><th>Definitive pick</th><th class="num">support</th></tr>` +
+    r16Rows.concat(qfRows).join('');
+  $('staticBracketNote').textContent =
+    `Static snapshot from ${DATA.meta.generated.slice(0, 16).replace('T', ' ')}Z; what-if pins do not change this table.`;
 }
 
 function renderRatings() {
@@ -463,6 +489,7 @@ async function load() {
   DATA = await j('/api/data');
   renderMeta();
   renderOdds(DATA.bracket, DATA.consensus, false);
+  renderStaticBracket();
   renderRatings();
   renderExternal();
   $('knobHL').value = DATA.meta.half_life_days;
