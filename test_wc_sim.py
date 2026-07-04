@@ -154,6 +154,28 @@ def test_match_feature_extracts_stats_and_xg_from_espn_shapes():
     assert feature_coverage(records)["coverage"]["xg"] == 1.0
 
 
+def test_external_payload_enriches_ratings():
+    import json
+    import server
+    payload = {"meta": {}, "ratings": [{"team": "Canada", "attack": 0.1, "defence": -0.1}]}
+    with TemporaryDirectory() as d:
+        old = server.EXTERNAL_DIR
+        server.EXTERNAL_DIR = Path(d)
+        try:
+            pd.DataFrame([{"team": "Canada", "confederation": "CONCACAF", "fifa_ranking": 30,
+                           "current_nt_players": 37, "top11_market_value": 165500000,
+                           "top23_market_value": 199500000, "squad_caps": 1184,
+                           "squad_goals": 158, "fiwc_minutes": 0,
+                           "fiwc_player_goals": 0}]).to_csv(Path(d) / "project_team_enrichment.csv", index=False)
+            (Path(d) / "external_meta.json").write_text(json.dumps({"source": "test", "generated": "now"}))
+            out = server._attach_external(payload)
+            assert out["external"]["present"] and out["meta"]["external_data"]["rows"] == 1
+            assert out["ratings"][0]["fifa_ranking"] == 30
+            assert out["ratings"][0]["top23_market_value"] == 199500000
+        finally:
+            server.EXTERNAL_DIR = old
+
+
 def test_forward_safe_context_uses_only_prior_matches():
     from feature_context import add_forward_safe_context
     rows = pd.DataFrame({

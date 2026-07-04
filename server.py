@@ -33,6 +33,7 @@ ROOT = Path(__file__).parent
 STATE_FILE = ROOT / "output" / "state.json"
 BACKTEST_FILE = ROOT / "output" / "backtest.json"
 SAMPLES_FILE = ROOT / "output" / "param_samples.json"
+EXTERNAL_DIR = ROOT / "output" / "external"
 app = Flask(__name__, static_folder="web", static_url_path="")
 STATE = {"payload": None, "params": None, "pens": {}, "samples": None}  # params = (atk, dfn, hfa, rho)
 LOCK = threading.Lock()
@@ -42,6 +43,56 @@ CFG = {"sims": DEFAULT_SIMS, "half_life": 1100.0, "friendly_weight": 1.0,
        "years": 4.0, "sampler": "antithetic"}  # 1100d: sweep-validated, smallest OOS gap
 KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
                "goal_scale": (0.8, 1.3), "sims": (10_000, DEFAULT_SIMS)}
+
+
+def _clean(v):
+    if pd.isna(v):
+        return None
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (np.floating,)):
+        return float(v)
+    return v
+
+
+def _load_external_payload():
+    path = EXTERNAL_DIR / "project_team_enrichment.csv"
+    if not path.exists():
+        return {"present": False, "note": "run external_data.py"}
+    df = pd.read_csv(path)
+    meta_path = EXTERNAL_DIR / "external_meta.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    keep = ["team", "confederation", "fifa_ranking", "current_nt_players",
+            "top11_market_value", "top23_market_value", "squad_caps", "squad_goals",
+            "fiwc_minutes", "fiwc_player_goals"]
+    rows = [{k: _clean(v) for k, v in row.items()} for row in df[keep].to_dict("records")]
+    rows.sort(key=lambda r: r.get("top23_market_value") or 0, reverse=True)
+    return {"present": True, "meta": meta, "teams": rows}
+
+
+def _attach_external(payload):
+    external = _load_external_payload()
+    payload["external"] = external
+    if not external.get("present"):
+        return payload
+    by_team = {r["team"]: r for r in external["teams"]}
+    for r in payload.get("ratings", []):
+        e = by_team.get(r["team"])
+        if e:
+            r.update({
+                "fifa_ranking": e.get("fifa_ranking"),
+                "top23_market_value": e.get("top23_market_value"),
+                "squad_caps": e.get("squad_caps"),
+                "squad_goals": e.get("squad_goals"),
+            })
+    payload["meta"]["external_data"] = {
+        "present": True,
+        "rows": len(external["teams"]),
+        "source": external.get("meta", {}).get("source"),
+        "generated": external.get("meta", {}).get("generated"),
+        "include_usage": external.get("meta", {}).get("include_usage"),
+    }
+    return payload
 
 
 def card(home, away, venue=""):
@@ -124,6 +175,7 @@ def refresh():
                  for t in atk), key=lambda r: -(r["attack"] - r["defence"]))[:30],
             "consensus": build_consensus(paths, bracket, known),
         }
+        _attach_external(STATE["payload"])
         STATE["payload"]["meta"]["forward_loop"] = update_forward_loop(STATE["payload"])
         STATE_FILE.parent.mkdir(exist_ok=True)
         STATE_FILE.write_text(json.dumps(
@@ -136,6 +188,7 @@ def load_state():
     if STATE_FILE.exists():
         s = json.loads(STATE_FILE.read_text())
         STATE["payload"] = s["payload"]
+        _attach_external(STATE["payload"])
         STATE["pens"] = s.get("pens", {})
         p = s["params"]
         STATE["params"] = (p["attack"], p["defence"], p["hfa"], p["rho"])
@@ -150,7 +203,12 @@ def index():
 
 @app.get("/api/data")
 def api_data():
-    return jsonify(STATE["payload"])
+    return jsonify(_attach_external(STATE["payload"]))
+
+
+@app.get("/api/external")
+def api_external():
+    return jsonify(_load_external_payload())
 
 
 def _matchup_args():

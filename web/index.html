@@ -149,6 +149,12 @@
   <table id="ratingsTbl" style="max-width:480px"></table>
 </details>
 
+<details open>
+  <summary>Player / market layer</summary>
+  <div id="externalMeta" class="mut"></div>
+  <table id="externalTbl"></table>
+</details>
+
 <footer>Dixon-Coles (1997) engine · AGPL-3.0 · model output, not betting advice ·
   data: martj42 + ESPN · <a href="https://github.com/suyashbansal07-dev/FIFA-26-sim">source</a></footer>
 </main>
@@ -157,6 +163,7 @@
 let DATA = null, PINS = {};
 const $ = id => document.getElementById(id);
 const pct = v => (100 * v).toFixed(1) + '%';
+const money = v => v == null ? '—' : '€' + (v / 1e6).toFixed(0) + 'm';
 async function j(url, opts) {
   const r = await fetch(url, opts);
   const d = await r.json();
@@ -261,10 +268,30 @@ function renderOdds(bracket, consensus, whatif) {
 
 function renderRatings() {
   $('ratingsTbl').innerHTML =
-    `<tr><th>#</th><th>Team</th><th class="num">attack α</th><th class="num">defence β</th></tr>` +
+    `<tr><th>#</th><th>Team</th><th class="num">attack α</th><th class="num">defence β</th><th class="num">rank</th><th class="num">top23</th></tr>` +
     DATA.ratings.map((r, i) =>
       `<tr><td class="mut">${i + 1}</td><td>${r.team}</td>
-       <td class="num">${r.attack.toFixed(2)}</td><td class="num">${r.defence.toFixed(2)}</td></tr>`).join('');
+       <td class="num">${r.attack.toFixed(2)}</td><td class="num">${r.defence.toFixed(2)}</td>
+       <td class="num">${r.fifa_ranking ?? '—'}</td><td class="num">${money(r.top23_market_value)}</td></tr>`).join('');
+}
+
+function renderExternal() {
+  const ex = DATA.external || {};
+  if (!ex.present) {
+    $('externalMeta').textContent = ex.note || 'not built';
+    $('externalTbl').innerHTML = '';
+    return;
+  }
+  const meta = ex.meta || {};
+  $('externalMeta').textContent = `${ex.teams.length} national teams · ${meta.source || 'external source'} · ${meta.generated || ''}`;
+  $('externalTbl').innerHTML =
+    `<tr><th>Team</th><th>Confed</th><th class="num">FIFA rank</th><th class="num">players</th>
+     <th class="num">top 11</th><th class="num">top 23</th><th class="num">caps</th><th class="num">goals</th></tr>` +
+    ex.teams.slice(0, 32).map(r =>
+      `<tr><td>${r.team}</td><td>${r.confederation || '—'}</td><td class="num">${r.fifa_ranking ?? '—'}</td>
+       <td class="num">${r.current_nt_players ?? '—'}</td><td class="num">${money(r.top11_market_value)}</td>
+       <td class="num">${money(r.top23_market_value)}</td><td class="num">${r.squad_caps ?? '—'}</td>
+       <td class="num">${r.squad_goals ?? '—'}</td></tr>`).join('');
 }
 
 /* ---------- match detail ---------- */
@@ -387,6 +414,7 @@ async function load() {
   renderMeta();
   renderOdds(DATA.bracket, DATA.consensus, false);
   renderRatings();
+  renderExternal();
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
   $('knobGS').value = DATA.meta.goal_scale ?? 1.1;

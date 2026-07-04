@@ -46,6 +46,7 @@ Optional extras:
 
 ```powershell
 .venv\Scripts\python uncertainty.py --boots 16   # bootstrap ensemble (server auto-uses)
+.venv\Scripts\python external_data.py            # player/market mart -> UI
 .venv\Scripts\python backtest.py                 # walk-forward validation -> UI
 .venv\Scripts\python backtest.py --sweep         # hyperparameter grid by OOS RPS
 .venv\Scripts\python test_wc_sim.py              # self-checks, no framework
@@ -58,6 +59,7 @@ flowchart LR
     A[martj42 bulk results] --> C[fetch_data.py]
     B[ESPN scoreboard API] --> C
     B2[ESPN match stats / xG] --> MF[match_features.py]
+    B3[Transfermarkt open dataset] --> X[external_data.py]
     C --> D[wc_sim.py<br/>Dixon-Coles MLE fit]
     D --> E[10x10 tau-corrected grids]
     U[uncertainty.py<br/>bootstrap refits] -.-> F
@@ -69,6 +71,7 @@ flowchart LR
     H --> J[forward_loop.py<br/>pre-match ledger, scored on results]
     K[backtest.py<br/>walk-forward RPS/Brier] --> H
     MF -.diagnostics only.-> J
+    X -.player/market context.-> H
 ```
 
 ### Model card
@@ -124,6 +127,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 | `web/index.html` | single-file vanilla-JS UI |
 | `fetch_data.py` | scrapers: martj42 bulk + ESPN top-up (shootouts, aliases, UTC skew) |
 | `match_features.py` | ESPN match stats / xG ingestion (diagnostics only, forward-safe) |
+| `external_data.py` | Transfermarkt player, national-team, and market mart (ignored output) |
 | `backtest.py` | walk-forward RPS/Brier/log-loss, reliability bins, `--sweep` |
 | `forward_loop.py` | append-only forecast ledger, scored pre-match-only |
 | `diagnostics.py` | evidence-first bias reports |
