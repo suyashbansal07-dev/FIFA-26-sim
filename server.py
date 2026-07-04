@@ -1,6 +1,6 @@
 """Flask app: web UI + prediction API + refresh pipeline for the WC-2026 sim.
 
-Run: .venv/Scripts/python server.py [--port 8026] [--sims 10000] [--auto-refresh-hours 6]
+Run: .venv/Scripts/python server.py [--port 8026] [--sims 1000000] [--auto-refresh-hours 6]
 
 Endpoints:
   GET  /               web/index.html
@@ -24,8 +24,9 @@ from flask import Flask, jsonify, request
 import fetch_data
 from backtest import write_backtest
 from forward_loop import update_forward_loop
-from wc_sim import (Simulator, dc_grid, fit_model, known_winners, load_matches,
-                    markets, match_rates, run_tournament, shootout_rates, team_params)
+from wc_sim import (DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
+                    load_matches, markets, match_rates, run_tournament, shootout_rates,
+                    team_params)
 
 ROOT = Path(__file__).parent
 STATE_FILE = ROOT / "output" / "state.json"
@@ -34,8 +35,10 @@ app = Flask(__name__, static_folder="web", static_url_path="")
 STATE = {"payload": None, "params": None, "pens": {}}  # params = (atk, dfn, hfa, rho)
 LOCK = threading.Lock()
 BACKTEST_LOCK = threading.Lock()
-CFG = {"sims": 10_000, "half_life": 550.0, "friendly_weight": 1.0, "years": 4.0}
-KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0), "sims": (1000, 50000)}
+CFG = {"sims": DEFAULT_SIMS, "half_life": 550.0, "friendly_weight": 1.0,
+       "years": 4.0, "sampler": "antithetic"}
+KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
+               "sims": (10_000, DEFAULT_SIMS)}
 
 
 def card(home, away, venue=""):
@@ -63,7 +66,7 @@ def refresh():
         STATE["pens"] = shootout_rates(shootouts)
         known = known_winners(bracket, df, shootouts)
         sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
-        probs = run_tournament(sim, bracket, known, CFG["sims"])
+        probs = run_tournament(sim, bracket, known, CFG["sims"], CFG["sampler"])
 
         fixtures = []
         for fx in bracket["r16"]:
@@ -78,7 +81,7 @@ def refresh():
                      "teams": df["home_team"].nunique(),
                      "hfa": round(hfa, 3), "rho": round(rho, 3),
                      "sims": CFG["sims"], "half_life_days": CFG["half_life"],
-                     "friendly_weight": CFG["friendly_weight"],
+                     "friendly_weight": CFG["friendly_weight"], "sampler": CFG["sampler"],
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "fixtures": fixtures,
             "tree": {k: bracket[k] for k in ("qf", "sf", "final")},
@@ -165,6 +168,9 @@ def _apply_knobs(body):
             v = min(max(float(body[k]), lo), hi)
             CFG[k] = int(v) if k == "sims" else v
             changed[k] = CFG[k]
+    if body.get("sampler") in SAMPLERS:
+        CFG["sampler"] = body["sampler"]
+        changed["sampler"] = CFG["sampler"]
     return changed
 
 
@@ -203,10 +209,13 @@ def api_whatif():
     if errors:
         return jsonify({"error": "; ".join(errors)}), 400
     known = {**STATE["payload"]["known"], **overrides}
-    sims = min(int(body.get("sims", 5000)), 20000)
+    sims = int(_clamp(int(body.get("sims", CFG["sims"])), *KNOB_RANGES["sims"]))
+    sampler = body.get("sampler", CFG["sampler"])
+    if sampler not in SAMPLERS:
+        return jsonify({"error": f"sampler must be one of {SAMPLERS}"}), 400
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"])
-    probs = run_tournament(sim, bracket, known, sims)
-    return jsonify({"overrides": overrides, "sims": sims, "bracket": sorted(
+    probs = run_tournament(sim, bracket, known, sims, sampler)
+    return jsonify({"overrides": overrides, "sims": sims, "sampler": sampler, "bracket": sorted(
         ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
           "final": round(p[2], 4), "champion": round(p[3], 4)}
          for t, p in probs.items()), key=lambda r: -r["champion"])})
@@ -252,13 +261,19 @@ def auto_refresh_loop(hours):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8026)
-    ap.add_argument("--sims", type=int, default=10_000)
+    ap.add_argument("--sims", type=int, default=DEFAULT_SIMS)
+    ap.add_argument("--sampler", choices=SAMPLERS, default="antithetic")
     ap.add_argument("--auto-refresh-hours", type=float, default=6.0)
     args = ap.parse_args()
     CFG["sims"] = args.sims
+    CFG["sampler"] = args.sampler
 
-    if not load_state():
-        print("no saved state - running first refresh (scrape + fit + simulate)...")
+    loaded = load_state()
+    meta = STATE["payload"]["meta"] if loaded else {}
+    if (not loaded or meta.get("sims") != CFG["sims"] or meta.get("sampler") != CFG["sampler"]
+            or meta.get("half_life_days") != CFG["half_life"]
+            or meta.get("friendly_weight") != CFG["friendly_weight"]):
+        print("refreshing state (scrape + fit + simulate)...")
         refresh()
     print(f"model ready: {STATE['payload']['meta']}")
     if args.auto_refresh_hours > 0:

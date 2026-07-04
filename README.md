@@ -16,7 +16,7 @@ py -3.13 -m venv .venv                      # penaltyblog has no cp314 wheels ye
 
 First boot scrapes, fits, and simulates automatically (~15 s). The UI has a
 Refresh button; the server also auto-refreshes every 6 h (`--auto-refresh-hours`).
-CLI equivalents: `fetch_data.py`, `wc_sim.py --sims 10000`, `backtest.py`,
+CLI equivalents: `fetch_data.py`, `wc_sim.py --sims 1000000`, `backtest.py`,
 `diagnostics.py`, `forward_loop.py`, `test_wc_sim.py`.
 
 Fetched CSVs in `data/` and generated files in `output/` are intentionally
@@ -32,7 +32,7 @@ ignored by git; rerun the scripts above to rebuild them.
 - `fetch_data.py` — scrapers: martj42/international_results bulk + ESPN scoreboard
   same-day top-up (finished games incl. shootout winners; dedup across UTC skew)
 - `wc_sim.py` — model core: penaltyblog MLE fit (`neutral_venue`-aware), grids,
-  Monte Carlo, CLI report; writes `output/probabilities.csv`. Training pool is
+  vectorized Monte Carlo, CLI report; writes `output/probabilities.csv`. Training pool is
   FIFA-competition teams only (drops CONIFA/regional sides the dataset carries)
 - `backtest.py` — walk-forward calibration: monthly refits, out-of-sample RPS /
   Brier / log-loss vs uniform + train-frequency baselines.
@@ -45,7 +45,20 @@ ignored by git; rerun the scripts above to rebuild them.
   calibration loop; refresh records unplayed fixtures, later runs settle them
 - `bracket_2026.json` — remaining bracket state (pairings, QF/SF tree, venues);
   played knockout winners are consumed automatically from the data
-- Knobs: `--sims`, `--half-life` (550 d default), `--years` (4), `--seed`
+- Knobs: `--sims` (1,000,000 default), `--sampler` (`antithetic`, `lhs`, `sobol`,
+  `random`), `--half-life` (550 d default), `--years` (4), `--seed`
+
+## Simulation methods
+
+- Match scorelines are analytic Dixon-Coles grids; Monte Carlo is used for the
+  path-dependent bracket.
+- Bracket simulation is vectorized with NumPy and defaults to 1,000,000
+  antithetic paths.
+- LHS and Sobol low-discrepancy samplers are available for bracket-path uniforms.
+- Copulas, GBM/mean-reversion, importance sampling, multiprocessing, and GPU
+  acceleration are not enabled yet: the current model has no correlated macro
+  factor paths or rare-tail payoff surface that would justify the added bias and
+  operational complexity.
 
 ## Known limitations (spec §5 + deliberate cuts)
 

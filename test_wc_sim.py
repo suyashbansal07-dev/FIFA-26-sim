@@ -5,7 +5,8 @@ from scipy.stats import poisson
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
-from wc_sim import MAX_GOALS, Simulator, dc_grid, decay_weights, markets, match_rates, shootout_rates
+from wc_sim import (MAX_GOALS, Simulator, dc_grid, decay_weights, markets, match_rates,
+                    run_tournament, shootout_rates)
 
 
 def test_tau_matches_spec():
@@ -144,6 +145,27 @@ def test_stronger_team_advances_more():
     sim = Simulator(atk, dfn, 0.25, -0.1, np.random.default_rng(1))
     wins = sum(sim.play("Strong", "Weak", "Neutral") == "Strong" for _ in range(2000))
     assert wins / 2000 > 0.75, f"strong team only won {wins/2000:.1%}"
+
+
+def test_vectorized_tournament_sampler_outputs_all_teams():
+    atk = {"A": 0.6, "B": -0.2, "C": 0.2, "D": -0.4}
+    dfn = {"A": -0.4, "B": 0.1, "C": -0.1, "D": 0.3}
+    sim = Simulator(atk, dfn, 0.0, -0.05, np.random.default_rng(2))
+    bracket = {
+        "r16": [{"id": "R16-1", "home": "A", "away": "B", "venue_country": "Neutral"},
+                {"id": "R16-2", "home": "C", "away": "D", "venue_country": "Neutral"}],
+        "qf": [],
+        "sf": [{"id": "SF-1", "from": ["R16-1", "R16-2"], "venue_country": "Neutral"}],
+        "final": {"id": "F", "from": ["SF-1", "SF-1"], "venue_country": "Neutral"},
+    }
+    probs = run_tournament(sim, bracket, {}, 2000, sampler="antithetic")
+    assert set(probs) == {"A", "B", "C", "D"}
+    assert abs(sum(p[3] for p in probs.values()) - 1) < 1e-12
+    assert probs["A"][0] > probs["B"][0]
+    for sampler in ("lhs", "sobol"):
+        sim = Simulator(atk, dfn, 0.0, -0.05, np.random.default_rng(2))
+        probs = run_tournament(sim, bracket, {}, 256, sampler=sampler)
+        assert abs(sum(p[3] for p in probs.values()) - 1) < 1e-12
 
 
 if __name__ == "__main__":

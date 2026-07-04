@@ -7,22 +7,23 @@ Implements "Dixon-Coles Architecture Spec.md":
   - Monte Carlo sim of the remaining knockout bracket in bracket_2026.json,
     conditioned on real results already in the data (spec 3.4)
 
-Usage: python wc_sim.py [--sims 10000] [--half-life 550] [--years 4] [--seed 26]
+Usage: python wc_sim.py [--sims 1000000] [--half-life 550] [--years 4] [--seed 26]
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import poisson
+from scipy.stats import poisson, qmc
 
 ROOT = Path(__file__).parent
 MAX_GOALS = 10  # grid covers scorelines 0-0 .. 9-9 (spec 3.1)
+DEFAULT_SIMS = 1_000_000
+SAMPLERS = ("random", "antithetic", "lhs", "sobol")
 
 
 # ---------------- data + fit ----------------
@@ -118,6 +119,7 @@ class Simulator:
         self.atk, self.dfn, self.hfa, self.rho, self.rng = atk, dfn, hfa, rho, rng
         self.pens = pens or {}
         self._cache = {}
+        self._advance_cache = {}
 
     def grid_for(self, a, b, venue):
         key = (a, b, venue)
@@ -131,6 +133,16 @@ class Simulator:
         ra, rb = self.pens.get(a, 0.5), self.pens.get(b, 0.5)
         return ra / (ra + rb)
 
+    def advance_prob(self, a, b, venue):
+        key = (a, b, venue)
+        if key not in self._advance_cache:
+            lam, mu, _, g = self.grid_for(a, b, venue)
+            h, d, _, _, _ = markets(g)
+            et = dc_grid(lam / 3, mu / 3, 0.0)
+            eh, ed, _, _, _ = markets(et)
+            self._advance_cache[key] = h + d * (eh + ed * self.pens_prob(a, b))
+        return self._advance_cache[key]
+
     def play(self, a, b, venue):
         lam, mu, flat, _ = self.grid_for(a, b, venue)
         x, y = divmod(self.rng.choice(flat.size, p=flat), MAX_GOALS)
@@ -141,6 +153,22 @@ class Simulator:
         if ex != ey:
             return a if ex > ey else b
         return a if self.rng.random() < self.pens_prob(a, b) else b
+
+
+def _uniforms(rng, n_sims, n_draws, sampler="antithetic"):
+    if sampler == "random":
+        return rng.random((n_sims, n_draws))
+    if sampler == "antithetic":
+        half = (n_sims + 1) // 2
+        u = rng.random((half, n_draws))
+        return np.vstack([u, 1.0 - u])[:n_sims]
+    seed = int(rng.integers(0, 2**32 - 1))
+    if sampler == "lhs":
+        return qmc.LatinHypercube(d=n_draws, seed=seed).random(n_sims)
+    if sampler == "sobol":
+        m = math.ceil(math.log2(max(1, n_sims)))
+        return qmc.Sobol(d=n_draws, scramble=True, seed=seed).random_base2(m)[:n_sims]
+    raise ValueError(f"unknown sampler: {sampler}")
 
 
 def known_winners(bracket, played, shootouts):
@@ -164,21 +192,47 @@ def known_winners(bracket, played, shootouts):
     return known
 
 
-def run_tournament(sim, bracket, known, n_sims):
+def run_tournament(sim, bracket, known, n_sims, sampler="antithetic"):
     """Returns {team: [p_reach_QF, p_reach_SF, p_reach_Final, p_champion]}."""
-    reach = defaultdict(lambda: np.zeros(4))
+    teams = list(dict.fromkeys(
+        [t for fx in bracket["r16"] for t in (fx["home"], fx["away"])] + list(known.values())
+    ))
+    team_to_i = {t: i for i, t in enumerate(teams)}
+    reach = np.zeros((len(teams), 4), dtype=np.int64)
+    draws = _uniforms(sim.rng, n_sims, 15, sampler)
+    draw_col = 0
+    winners = {}
+
+    def ids(team):
+        return np.full(n_sims, team_to_i[team], dtype=np.int16)
+
+    def choose(fx, a, b):
+        nonlocal draw_col
+        if fx["id"] in known:
+            return ids(known[fx["id"]])
+        u = draws[:, draw_col]
+        draw_col += 1
+        out = np.empty(n_sims, dtype=np.int16)
+        pairs = np.stack([a, b], axis=1)
+        unique_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
+        for pair_idx, (ai, bi) in enumerate(unique_pairs):
+            mask = inverse == pair_idx
+            p = sim.advance_prob(teams[int(ai)], teams[int(bi)], fx["venue_country"])
+            out[mask] = np.where(u[mask] < p, ai, bi)
+        return out
+
     rounds = [("r16", 0), ("qf", 1), ("sf", 2)]
-    for _ in range(n_sims):
-        w = {}
-        for rnd, level in rounds:
-            for fx in bracket[rnd]:
-                a, b = (fx["home"], fx["away"]) if "home" in fx else (w[fx["from"][0]], w[fx["from"][1]])
-                w[fx["id"]] = known.get(fx["id"]) or sim.play(a, b, fx["venue_country"])
-                reach[w[fx["id"]]][level] += 1
-        f = bracket["final"]
-        champ = known.get(f["id"]) or sim.play(w[f["from"][0]], w[f["from"][1]], f["venue_country"])
-        reach[champ][3] += 1
-    return {t: v / n_sims for t, v in reach.items()}
+    for rnd, level in rounds:
+        for fx in bracket[rnd]:
+            a, b = (ids(fx["home"]), ids(fx["away"])) if "home" in fx else (
+                winners[fx["from"][0]], winners[fx["from"][1]]
+            )
+            winners[fx["id"]] = choose(fx, a, b)
+            np.add.at(reach[:, level], winners[fx["id"]], 1)
+    f = bracket["final"]
+    champ = choose(f, winners[f["from"][0]], winners[f["from"][1]])
+    np.add.at(reach[:, 3], champ, 1)
+    return {teams[i]: row / n_sims for i, row in enumerate(reach) if row.sum()}
 
 
 # ---------------- reporting ----------------
@@ -198,7 +252,8 @@ def print_match_cards(sim, bracket, known):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--sims", type=int, default=10_000)
+    ap.add_argument("--sims", type=int, default=DEFAULT_SIMS)
+    ap.add_argument("--sampler", choices=SAMPLERS, default="antithetic")
     ap.add_argument("--half-life", type=float, default=550.0, help="decay half-life, days (spec 2.3)")
     ap.add_argument("--friendly-weight", type=float, default=1.0, help="weight multiplier for friendlies")
     ap.add_argument("--years", type=float, default=4.0, help="training window, years")
@@ -223,13 +278,13 @@ def main():
                     pens=shootout_rates(shootouts))
     print_match_cards(sim, bracket, known)
 
-    probs = run_tournament(sim, bracket, known, args.sims)
+    probs = run_tournament(sim, bracket, known, args.sims, args.sampler)
     out = pd.DataFrame(
         [(t, *p) for t, p in probs.items()],
         columns=["team", "reach_QF", "reach_SF", "reach_final", "champion"],
     ).sort_values("champion", ascending=False).reset_index(drop=True)
 
-    print(f"\n=== Remaining-bracket Monte Carlo ({args.sims} sims) ===")
+    print(f"\n=== Remaining-bracket Monte Carlo ({args.sims} sims, {args.sampler}) ===")
     print(out.to_string(index=False, formatters={c: "{:.1%}".format for c in out.columns[1:]}))
 
     (ROOT / "output").mkdir(exist_ok=True)

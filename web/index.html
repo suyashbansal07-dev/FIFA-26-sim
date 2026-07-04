@@ -49,7 +49,8 @@
   <div class="row" style="margin-bottom:8px">
     <label class="mut">half-life (days) <input id="knobHL" type="number" min="100" max="2000" step="50" style="width:75px"></label>
     <label class="mut">friendly weight <input id="knobFW" type="number" min="0" max="1" step="0.1" style="width:60px"></label>
-    <label class="mut">sims <select id="knobSims"><option>5000</option><option>10000</option><option>20000</option></select></label>
+    <label class="mut">sims <select id="knobSims"><option>100000</option><option>500000</option><option>1000000</option></select></label>
+    <label class="mut">sampler <select id="knobSampler"><option>antithetic</option><option>lhs</option><option>sobol</option><option>random</option></select></label>
     <button id="refreshBtn" onclick="doRefresh()">Refresh (scrape + refit + simulate)</button>
   </div>
 
@@ -98,7 +99,7 @@ function renderMeta() {
   const m = DATA.meta;
   $('meta').textContent = `trained on ${m.trained_matches} matches (${m.train_from} → ${m.newest_result}), ` +
     `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
-  $('simsNote').textContent = `— ${m.sims.toLocaleString()} Monte Carlo runs of the remaining bracket`;
+  $('simsNote').textContent = `— ${m.sims.toLocaleString()} ${m.sampler || 'antithetic'} Monte Carlo runs of the remaining bracket`;
 }
 
 function renderBracket(bracket, whatif) {
@@ -195,7 +196,7 @@ async function doRefresh() {
   try {
     await j('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
-                             sims: +$('knobSims').value }) });
+                             sims: +$('knobSims').value, sampler: $('knobSampler').value }) });
     await load();
   } catch (e) { alert('refresh failed: ' + e.message); }
   b.disabled = false; b.textContent = 'Refresh (scrape + refit + simulate)';
@@ -207,7 +208,8 @@ async function doWhatif() {
   if (!Object.keys(overrides).length) { alert('pin at least one winner first'); return; }
   try {
     const r = await j('/api/whatif', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                       body: JSON.stringify({ overrides }) });
+                                       body: JSON.stringify({ overrides, sims: +$('knobSims').value,
+                                                              sampler: $('knobSampler').value }) });
     renderBracket(r.bracket, true);
     $('bracketTbl').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) { alert(e.message); }
@@ -256,6 +258,7 @@ async function load() {
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
   $('knobSims').value = DATA.meta.sims;
+  $('knobSampler').value = DATA.meta.sampler || 'antithetic';
   const opts = DATA.teams.map(t => `<option>${t}</option>`).join('');
   $('selHome').innerHTML = opts; $('selAway').innerHTML = opts;
   $('selHome').value = 'Argentina'; $('selAway').value = 'Spain';
