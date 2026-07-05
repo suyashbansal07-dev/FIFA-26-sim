@@ -179,6 +179,7 @@
 <details open>
   <summary>Player / market layer</summary>
   <div id="externalMeta" class="mut"></div>
+  <div id="usageMeta" class="mut"></div>
   <table id="externalTbl"></table>
 </details>
 
@@ -432,6 +433,16 @@ function renderExternal() {
        <td class="num">${r.squad_goals ?? '—'}</td></tr>`).join('');
 }
 
+function renderUsageMeta() {
+  const ex = DATA.external || {};
+  if (!ex.present) return;
+  const rows = ex.teams.filter(r => r.fiwc_minutes);
+  const top = rows.slice().sort((a, b) => (b.fiwc_minutes || 0) - (a.fiwc_minutes || 0))
+    .slice(0, 3).map(r => `${r.team} ${Math.round(r.fiwc_minutes)}`).join(', ');
+  const starts = ex.meta?.rows?.fiwc_2026_starts ?? 0;
+  $('usageMeta').textContent = `${rows.length} teams with WC usage minutes · lineup rows ${starts} · top minutes: ${top || 'none'}`;
+}
+
 /* ---------- match detail ---------- */
 function heatmap(c) {
   const flat = c.grid.flat(), max = Math.max(...flat);
@@ -621,6 +632,7 @@ async function load() {
   renderStaticBracket(DATA.verdict, false);
   renderRatings();
   renderExternal();
+  renderUsageMeta();
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
   $('knobGS').value = DATA.meta.goal_scale ?? 1.1;

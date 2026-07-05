@@ -51,7 +51,7 @@ Optional extras:
 ```powershell
 .venv\Scripts\python uncertainty.py --boots 16   # bootstrap ensemble (server auto-uses)
 .venv\Scripts\python fifa_rankings.py            # live FIFA ranking snapshot -> tracked CSV
-.venv\Scripts\python external_data.py            # player/market/chemistry mart -> model + UI
+.venv\Scripts\python external_data.py            # player/market/chemistry/WC usage mart -> model + UI
 .venv\Scripts\python backtest.py                 # walk-forward validation -> UI
 .venv\Scripts\python backtest.py --sweep         # hyperparameter grid by OOS RPS
 .venv\Scripts\python test_wc_sim.py              # self-checks, no framework
@@ -142,7 +142,7 @@ aggregate under-goals signal to fix by blindly inflating rates.
 | `fetch_data.py` | scrapers: martj42 bulk + ESPN top-up (shootouts, aliases, UTC skew) |
 | `fifa_rankings.py` | live FIFA ranking sync from `fifa.com/en/world-rankings` |
 | `match_features.py` | ESPN match stats / xG ingestion (diagnostics only, forward-safe) |
-| `external_data.py` | Transfermarkt player, national-team, market, chemistry, and FIFA-rank mart (ignored output) |
+| `external_data.py` | Transfermarkt player, national-team, market, chemistry, FIFA-rank, and WC usage mart (ignored output) |
 | `external_signals.py` | capped model prior from top-11 quality, squad depth, FIFA rank, caps/goals, and chemistry |
 | `backtest.py` | walk-forward RPS/Brier/log-loss, scoreline calibration, reliability bins, `--sweep` |
 | `forward_loop.py` | append-only forecast ledger, scored pre-match-only, sample-gated calibration policy |

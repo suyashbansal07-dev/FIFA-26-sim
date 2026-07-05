@@ -328,13 +328,17 @@ def test_external_payload_enriches_ratings():
             pd.DataFrame([{"team": "Canada", "confederation": "CONCACAF", "fifa_ranking": 30,
                            "current_nt_players": 37, "top11_market_value": 165500000,
                            "top23_market_value": 199500000, "squad_caps": 1184,
-                           "squad_goals": 158, "fiwc_minutes": 0,
-                           "fiwc_player_goals": 0}]).to_csv(Path(d) / "project_team_enrichment.csv", index=False)
+                           "squad_goals": 158, "fiwc_player_appearances": 44,
+                           "fiwc_minutes": 2700, "fiwc_player_goals": 7,
+                           "fiwc_assists": 4, "fiwc_yellow_cards": 2,
+                           "fiwc_red_cards": 0}]).to_csv(Path(d) / "project_team_enrichment.csv", index=False)
             (Path(d) / "external_meta.json").write_text(json.dumps({"source": "test", "generated": "now"}))
             out = server._attach_external(payload)
             assert out["external"]["present"] and out["meta"]["external_data"]["rows"] == 1
             assert out["ratings"][0]["fifa_ranking"] == 30
             assert out["ratings"][0]["top23_market_value"] == 199500000
+            assert out["external"]["teams"][0]["fiwc_minutes"] == 2700
+            assert out["external"]["teams"][0]["fiwc_assists"] == 4
         finally:
             server.EXTERNAL_DIR = old
 

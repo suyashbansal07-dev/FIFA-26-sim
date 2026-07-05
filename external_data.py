@@ -212,26 +212,28 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         """)
         con.sql(f"""
             create or replace temp view fiwc_2026_appearances as
-            select nt.name as team, count(*) as player_appearances,
+            select coalesce(nta.team, nt.name) as team, count(*) as player_appearances,
                    sum(a.minutes_played) as minutes_played,
                    sum(a.goals) as goals, sum(a.assists) as assists,
                    sum(a.yellow_cards) as yellow_cards, sum(a.red_cards) as red_cards
             from appearances a
             join games g on g.game_id = a.game_id
             left join national_teams nt on nt.national_team_id = a.player_club_id
+            left join team_aliases nta on nta.source = nt.name
             where g.competition_id = 'FIWC' and g.date >= '{start}'
-            group by nt.name
+            group by coalesce(nta.team, nt.name)
         """)
         con.sql(f"""
             create or replace temp view fiwc_2026_starts as
-            select nt.name as team,
+            select coalesce(nta.team, nt.name) as team,
                    sum(case when lower(type) = 'starting_lineup' then 1 else 0 end) as starts,
                    sum(case when team_captain = 1 then 1 else 0 end) as captain_starts
             from game_lineups gl
             join games g on g.game_id = gl.game_id
             left join national_teams nt on nt.national_team_id = gl.club_id
+            left join team_aliases nta on nta.source = nt.name
             where g.competition_id = 'FIWC' and g.date >= '{start}'
-            group by nt.name
+            group by coalesce(nta.team, nt.name)
         """)
     else:
         con.sql("""
@@ -286,6 +288,7 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
             "team_chemistry": int(con.sql("select count(*) from team_chemistry").fetchone()[0]),
             "project_team_enrichment": int(con.sql("select count(*) from project_team_enrichment").fetchone()[0]),
             "fiwc_2026_appearances": int(con.sql("select count(*) from fiwc_2026_appearances").fetchone()[0]),
+            "fiwc_2026_starts": int(con.sql("select count(*) from fiwc_2026_starts").fetchone()[0]),
         },
     }
     (out_dir / "external_meta.json").write_text(json.dumps(meta, indent=1))
@@ -295,8 +298,10 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--start", default="2026-06-01")
-    ap.add_argument("--include-usage", action="store_true",
-                    help="also scan appearances/lineups; slower, but adds WC usage columns")
+    ap.add_argument("--include-usage", dest="include_usage", action="store_true", default=True,
+                    help="scan appearances/lineups; default because the live model/UI use usage coverage")
+    ap.add_argument("--skip-usage", dest="include_usage", action="store_false",
+                    help="skip appearances/lineups for a faster team/player mart rebuild")
     args = ap.parse_args()
     meta, sample = build_external_mart(args.start, include_usage=args.include_usage)
     print(f"external mart rows: {meta['rows']}")

@@ -92,7 +92,9 @@ def _load_external_payload():
     keep = ["team", "confederation", "fifa_ranking", "current_nt_players",
             "top11_market_value", "top23_market_value", "squad_caps", "squad_goals",
             "chemistry_score", "position_balance", "same_club_share",
-            "fiwc_minutes", "fiwc_player_goals"]
+            "fiwc_player_appearances", "fiwc_minutes", "fiwc_player_goals",
+            "fiwc_assists", "fiwc_yellow_cards", "fiwc_red_cards",
+            "fiwc_starts", "fiwc_captain_starts"]
     for col in keep:
         if col not in df:
             df[col] = None

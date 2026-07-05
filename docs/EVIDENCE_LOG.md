@@ -453,3 +453,49 @@ git diff --check
 
 Result: all self-checks passed, including hold/no-op and apply-once/idempotence
 coverage for the calibration hook.
+
+## Player usage coverage refresh (2026-07-05)
+
+The previous generated external mart had `include_usage=false`, so the
+Transfermarkt player/market layer was present but live World Cup player usage
+columns were all zero. I regenerated with usage enabled and made usage mode the
+default for `external_data.py` (`--skip-usage` is now the fast opt-out).
+
+Command:
+
+```powershell
+.venv\Scripts\python.exe external_data.py --include-usage
+```
+
+Result:
+
+- `project_team_enrichment=215`
+- `player_pool=2852`
+- `team_chemistry=124`
+- `fiwc_2026_appearances=44`
+- `fiwc_2026_starts=0`
+
+Coverage details:
+
+- 41 project teams have nonzero `fiwc_minutes`.
+- Current bracket examples now have usage minutes/goals/assists in
+  `/api/data`: Canada, Morocco, France, Paraguay, United States, Mexico,
+  Argentina, Brazil, Norway.
+- FIWC starts remain unavailable because the upstream `game_lineups` table has
+  zero rows matching FIWC games after 2026-06-01, despite the `games` table
+  containing FIWC fixtures.
+
+Change:
+
+- `external_data.py` now aliases usage rows through the same team alias table
+  used by team strength.
+- `external_data.py` defaults to include usage; `--skip-usage` keeps the faster
+  rebuild path.
+- `/api/data` external payload now keeps appearances, minutes, goals, assists,
+  cards, and start fields.
+- The web player/market layer shows usage coverage summary and lineups row
+  count, so the missing-starter limitation is visible instead of hidden.
+
+Decision: do not create a missing-starter model prior yet. There are no FIWC
+lineup rows to validate or apply it. Current usage is useful context, but
+starter-specific adjustments would be fake precision.
