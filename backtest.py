@@ -34,14 +34,22 @@ def rps(probs, outcome):
     return float(np.sum((c[:2] - np.cumsum(o)[:2]) ** 2) / 2)
 
 
-def outcome_probs(atk, dfn, hfa, rho, row, goal_scale=DEFAULT_GOAL_SCALE,
-                  external_strength=None, external_weight=0.0,
-                  form_strength=None, form_weight=0.0):
+def grid_for_row(atk, dfn, hfa, rho, row, goal_scale=DEFAULT_GOAL_SCALE,
+                 external_strength=None, external_weight=0.0,
+                 form_strength=None, form_weight=0.0):
     venue = "" if row.neutral else row.home_team
     lam, mu = match_rates(atk, dfn, hfa, row.home_team, row.away_team, venue,
                           goal_scale, external_strength, external_weight,
                           form_strength, form_weight)
-    g = dc_grid(lam, mu, rho)
+    return lam, mu, dc_grid(lam, mu, rho)
+
+
+def outcome_probs(atk, dfn, hfa, rho, row, goal_scale=DEFAULT_GOAL_SCALE,
+                  external_strength=None, external_weight=0.0,
+                  form_strength=None, form_weight=0.0):
+    _, _, g = grid_for_row(atk, dfn, hfa, rho, row, goal_scale,
+                           external_strength, external_weight,
+                           form_strength, form_weight)
     return np.array([np.tril(g, -1).sum(), np.trace(g), np.triu(g, 1).sum()])
 
 
@@ -52,9 +60,10 @@ def _score_rows(rows, atk, dfn, hfa, rho, sink, goal_scale=DEFAULT_GOAL_SCALE,
         if row.home_team not in atk or row.away_team not in atk:
             sink["skipped"] += 1
             continue
-        p = outcome_probs(atk, dfn, hfa, rho, row, goal_scale,
-                          external_strength, external_weight,
-                          form_strength, form_weight)
+        lam, mu, g = grid_for_row(atk, dfn, hfa, rho, row, goal_scale,
+                                  external_strength, external_weight,
+                                  form_strength, form_weight)
+        p = np.array([np.tril(g, -1).sum(), np.trace(g), np.triu(g, 1).sum()])
         y = int(row.outcome)
         sink["rps"].append(rps(p, y))
         sink["brier"].append(float(np.sum((p - np.eye(3)[y]) ** 2)))
@@ -63,6 +72,19 @@ def _score_rows(rows, atk, dfn, hfa, rho, sink, goal_scale=DEFAULT_GOAL_SCALE,
         sink["fav_hit"].append(int(p.argmax() == y))
         sink["uniform"].append(rps(np.full(3, 1 / 3), y))
         sink["freq"].append(rps(sink["_freq"], y))
+        total = int(row.home_score + row.away_score)
+        top = sorted(((float(g[x, z]), x, z) for x in range(g.shape[0]) for z in range(g.shape[1])),
+                     reverse=True)[:3]
+        score_p = float(g[int(row.home_score), int(row.away_score)]) \
+            if row.home_score < g.shape[0] and row.away_score < g.shape[1] else 0.0
+        sink["pred_goals"].append(float(lam + mu))
+        sink["actual_goals"].append(total)
+        sink["pred_over25"].append(float(g[np.add.outer(np.arange(g.shape[0]), np.arange(g.shape[1])) > 2].sum()))
+        sink["actual_over25"].append(1.0 if total > 2 else 0.0)
+        sink["scoreline_logloss"].append(-math.log(max(score_p, 1e-12)))
+        sink["score_top1"].append(int((top[0][1], top[0][2]) == (row.home_score, row.away_score)))
+        sink["score_top3"].append(int(any((x, z) == (row.home_score, row.away_score) for _, x, z in top)))
+        sink["top_low_score"].append(int(top[0][1] + top[0][2] <= 2))
 
 
 def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
@@ -70,10 +92,11 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
                  external_weight=0.0, form_weight=DEFAULT_FORM_WEIGHT,
                  features=None, verbose=True):
     start, end = pd.Timestamp(start), df["date"].max()
-    oos = {"rps": [], "brier": [], "logloss": [], "fav_p": [], "fav_hit": [],
-           "uniform": [], "freq": [], "skipped": 0}
-    ins = {"rps": [], "brier": [], "logloss": [], "fav_p": [], "fav_hit": [],
-           "uniform": [], "freq": [], "skipped": 0}
+    metric_keys = ("rps", "brier", "logloss", "fav_p", "fav_hit", "uniform", "freq",
+                   "pred_goals", "actual_goals", "pred_over25", "actual_over25",
+                   "scoreline_logloss", "score_top1", "score_top3", "top_low_score")
+    oos = {k: [] for k in metric_keys} | {"skipped": 0}
+    ins = {k: [] for k in metric_keys} | {"skipped": 0}
     block = start
     while block <= end:
         block_end = block + pd.Timedelta(days=refit_days)
@@ -120,6 +143,16 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
         "brier": round(float(np.mean(oos["brier"])), 4),
         "logloss": round(float(np.mean(oos["logloss"])), 4),
         "rps_in_sample": round(float(np.mean(ins["rps"])), 4) if ins["rps"] else None,
+        "scoreline_calibration": {
+            "predicted_goals": round(float(np.mean(oos["pred_goals"])), 3),
+            "actual_goals": round(float(np.mean(oos["actual_goals"])), 3),
+            "predicted_over25": round(float(np.mean(oos["pred_over25"])), 3),
+            "actual_over25": round(float(np.mean(oos["actual_over25"])), 3),
+            "exact_score_logloss": round(float(np.mean(oos["scoreline_logloss"])), 4),
+            "top1_hit": round(float(np.mean(oos["score_top1"])), 3),
+            "top3_hit": round(float(np.mean(oos["score_top3"])), 3),
+            "top_low_score_share": round(float(np.mean(oos["top_low_score"])), 3),
+        },
         "reliability": bins,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -188,6 +221,11 @@ def main():
     print(f"RPS   model {r['rps']} | uniform {r['rps_uniform']} | train-freq {r['rps_trainfreq']}   (lower better)")
     print(f"Brier {r['brier']} | log-loss {r['logloss']} | in-sample RPS {r['rps_in_sample']} "
           f"(gap {r['rps'] - r['rps_in_sample']:+.4f}; large positive = overfit)")
+    sc = r["scoreline_calibration"]
+    print(f"goals predicted {sc['predicted_goals']} vs actual {sc['actual_goals']} | "
+          f"O2.5 predicted {sc['predicted_over25']} vs actual {sc['actual_over25']} | "
+          f"exact-score top1 {sc['top1_hit']:.1%}, top3 {sc['top3_hit']:.1%} | "
+          f"low-score modal {sc['top_low_score_share']:.1%}")
     print(f"external prior weight {r['config']['external_weight']} | {r['external_prior']}")
     print(f"form prior weight {r['config']['form_weight']} | {r['form_prior']}")
     print("reliability (favorite):", *(f"\n  {b['bin']}: predicted {b['predicted']:.2f} "

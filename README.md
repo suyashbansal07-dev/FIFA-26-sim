@@ -109,6 +109,12 @@ bins and the forward ledger (first settled knockout forecast: Morocco favorite
 at 45.1%, hit) live in the UI's *Model validation* section and
 [docs/EVIDENCE_LOG.md](docs/EVIDENCE_LOG.md).
 
+Scoreline calibration is now shown in the same validation panel. Current OOS
+totals: predicted goals `2.949` vs actual `2.804`, predicted over-2.5 `53.3%`
+vs actual `51.8%`, exact-score top-1 hit `16.6%`, top-3 hit `35.7%`. The common
+1-0 / 1-1 / 0-1 modal scores are therefore a scoreline-shape limitation, not an
+aggregate under-goals signal to fix by blindly inflating rates.
+
 ## Web UI & API
 
 | Endpoint | What |
@@ -137,7 +143,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 | `match_features.py` | ESPN match stats / xG ingestion (diagnostics only, forward-safe) |
 | `external_data.py` | Transfermarkt player, national-team, market, chemistry, and FIFA-rank mart (ignored output) |
 | `external_signals.py` | capped model prior from top-11 quality, squad depth, FIFA rank, caps/goals, and chemistry |
-| `backtest.py` | walk-forward RPS/Brier/log-loss, reliability bins, `--sweep` |
+| `backtest.py` | walk-forward RPS/Brier/log-loss, scoreline calibration, reliability bins, `--sweep` |
 | `forward_loop.py` | append-only forecast ledger, scored pre-match-only |
 | `diagnostics.py` | evidence-first bias reports |
 | `bracket_2026.json` | live bracket state (pairings, tree, venues, manual overrides) |

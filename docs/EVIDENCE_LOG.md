@@ -378,3 +378,42 @@ Full backtest after implementation:
 Decision: set default `external_weight=0.15`. This is the tested cap, but the
 rate adjustment itself remains capped by `MAX_RATE_ADJ=0.25`, and the form
 prior stays disabled because its previous sweep widened the overfit gap.
+
+## Low-score modal scoreline diagnosis (2026-07-05)
+
+User concern: match cards still often show 1-0, 0-0, 0-1, and 1-1 as top
+scorelines. I checked whether this was an aggregate under-goals problem before
+touching the model.
+
+Goal-scale sweep on the same fitted walk-forward blocks:
+
+| Goal scale | RPS | Brier | Log-loss | Pred goals | Actual goals | Pred O2.5 | Actual O2.5 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.95 | 0.1518 | 0.4833 | 0.8302 | 2.547 | 2.804 | 0.447 | 0.518 |
+| 1.00 | 0.1515 | 0.4828 | 0.8301 | 2.681 | 2.804 | 0.477 | 0.518 |
+| 1.05 | 0.1513 | 0.4827 | 0.8306 | 2.815 | 2.804 | 0.505 | 0.518 |
+| 1.10 | 0.1512 | 0.4828 | 0.8316 | 2.949 | 2.804 | 0.533 | 0.518 |
+| 1.15 | 0.1512 | 0.4832 | 0.8331 | 3.083 | 2.804 | 0.559 | 0.518 |
+| 1.20 | 0.1512 | 0.4838 | 0.8349 | 3.217 | 2.804 | 0.585 | 0.518 |
+
+Finding: default `goal_scale=1.10` is not under-goal; it slightly overpredicts
+total goals and over-2.5. Raising rates to make cards look less conservative
+would be cosmetic and less calibrated.
+
+Change:
+
+- `backtest.py` now writes `scoreline_calibration`: predicted/actual goals,
+  predicted/actual over-2.5, exact-score log-loss, top-1/top-3 exact-score hit
+  rate, and share of matches whose modal predicted scoreline is low-score
+  (`<=2` total goals).
+- The validation UI renders these metrics.
+
+Current full backtest scoreline metrics:
+
+- Predicted goals `2.949` vs actual `2.804`
+- Predicted over-2.5 `0.533` vs actual `0.518`
+- Exact-score top-1 hit `0.166`, top-3 hit `0.357`
+- Low-score modal top pick share `0.801`
+
+Decision: keep `goal_scale=1.10` for now. The remaining issue is distribution
+shape / exact-score concentration, not aggregate scoring level.

@@ -576,13 +576,19 @@ function renderBacktest(b) {
       `<tr><td>${r.bin}</td><td class="num">${pct(r.predicted)}</td>
        <td class="num">${pct(r.observed)}</td><td class="num">${r.n}</td></tr>`).join('');
   const gap = (b.rps - b.rps_in_sample).toFixed(4);
+  const sc = b.scoreline_calibration || {};
+  const scoreline = sc.predicted_goals == null ? '' :
+    `<p style="margin:0 0 8px">Goals ${sc.predicted_goals} predicted / ${sc.actual_goals} actual
+       · over 2.5 ${pct(sc.predicted_over25)} predicted / ${pct(sc.actual_over25)} actual
+       · exact score top1 ${pct(sc.top1_hit)}, top3 ${pct(sc.top3_hit)}
+       · low-score top pick ${pct(sc.top_low_score_share)}</p>`;
   $('backtest').innerHTML =
     `<p style="margin:0 0 8px">RPS <b>${b.rps}</b> vs uniform ${b.rps_uniform} / train-freq ${b.rps_trainfreq}
        · Brier ${b.brier} · log-loss ${b.logloss} · ${b.n} matches since ${b.config.start}<br>
        in-sample RPS ${b.rps_in_sample} → out-of-sample gap ${gap} (large positive = overfit)
        · half-life ${b.config.half_life}d · friendly weight ${b.config.friendly_weight}
        · external weight ${b.config.external_weight ?? 0} · form weight ${b.config.form_weight ?? 0}</p>
-      <table style="max-width:480px"><tr><th>favorite prob bin</th><th class="num">predicted</th>
+      ${scoreline}<table style="max-width:480px"><tr><th>favorite prob bin</th><th class="num">predicted</th>
        <th class="num">observed</th><th class="num">n</th></tr>${rows}</table>
       <p>calibrated when predicted ≈ observed per bin</p>`;
 }

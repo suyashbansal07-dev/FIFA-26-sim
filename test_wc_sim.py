@@ -188,6 +188,23 @@ def test_rps_known_values():
     assert rps(good, 0) < rps(bad, 0), "RPS must reward the sharper forecast"
 
 
+def test_backtest_scoreline_calibration_metrics_are_recorded():
+    from backtest import _score_rows
+    rows = pd.DataFrame([{"home_team": "A", "away_team": "B", "home_score": 2,
+                          "away_score": 1, "neutral": True, "outcome": 0}])
+    keys = ("rps", "brier", "logloss", "fav_p", "fav_hit", "uniform", "freq",
+            "pred_goals", "actual_goals", "pred_over25", "actual_over25",
+            "scoreline_logloss", "score_top1", "score_top3", "top_low_score")
+    sink = {k: [] for k in keys} | {"skipped": 0, "_freq": np.full(3, 1 / 3)}
+    _score_rows(rows, {"A": 0.1, "B": -0.1}, {"A": -0.1, "B": 0.1},
+                0.0, -0.05, sink, goal_scale=1.0)
+    assert sink["skipped"] == 0
+    assert sink["actual_goals"] == [3]
+    assert sink["pred_goals"][0] > 0
+    assert 0 <= sink["pred_over25"][0] <= 1
+    assert sink["scoreline_logloss"][0] > 0
+
+
 def test_whatif_rejects_impossible_r16_override():
     from server import _validate_overrides
     bracket = {"r16": [{"id": "R16-1", "home": "Canada", "away": "Morocco"}],
