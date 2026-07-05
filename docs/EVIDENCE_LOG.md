@@ -228,6 +228,20 @@ Decision: keep the form prior as an inspectable/tunable engine and show it in
 `/api/case`, but leave the default at `0.00` until more settled forward data
 proves that it improves forecasts without widening the in-sample/OOS gap.
 
+Update: the form engine now also uses prior-match shot pressure (shots, shots
+on target, corners, possession) when ESPN features exist. The signal remains
+forward-safe because only matches before `as_of` are consumed. Retest after the
+stat-pressure addition still does not justify enabling it by default:
+
+| Form weight | RPS | Brier | Log-loss | In-sample RPS | OOS gap |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.000 | 0.1526 | 0.4857 | 0.8348 | 0.1453 | +0.0073 |
+| 0.003 | 0.1527 | 0.4859 | 0.8350 | 0.1447 | +0.0080 |
+| 0.005 | 0.1528 | 0.4860 | 0.8352 | 0.1442 | +0.0086 |
+| 0.010 | 0.1529 | 0.4863 | 0.8357 | 0.1432 | +0.0097 |
+| 0.020 | 0.1532 | 0.4870 | 0.8368 | 0.1411 | +0.0121 |
+| 0.040 | 0.1541 | 0.4889 | 0.8397 | 0.1373 | +0.0168 |
+
 ## Full live FIFA ranking sync (2026-07-05)
 
 Command:

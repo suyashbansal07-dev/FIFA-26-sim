@@ -110,6 +110,27 @@ def test_form_strength_rewards_opponent_adjusted_recent_run():
     assert form_rate_adjustment("Underdog", "Favorite", strength, 0.04) > 0
 
 
+def test_form_strength_uses_prior_match_stat_pressure():
+    from form_signals import build_recent_form_strength
+    rows = pd.DataFrame([
+        {"date": "2026-06-01", "home_team": "Pressure", "away_team": "Passive",
+         "home_score": 0, "away_score": 0},
+        {"date": "2026-06-05", "home_team": "Passive", "away_team": "Pressure",
+         "home_score": 0, "away_score": 0},
+    ])
+    features = pd.DataFrame([
+        {"date": "2026-06-01", "home_team": "Pressure", "away_team": "Passive",
+         "home_shots": 18, "away_shots": 4, "home_sot": 7, "away_sot": 1,
+         "home_corners": 9, "away_corners": 2, "home_possession": 64, "away_possession": 36},
+        {"date": "2026-06-05", "home_team": "Passive", "away_team": "Pressure",
+         "home_shots": 5, "away_shots": 17, "home_sot": 1, "away_sot": 6,
+         "home_corners": 1, "away_corners": 8, "home_possession": 39, "away_possession": 61},
+    ])
+    strength, meta = build_recent_form_strength(rows, features=features, min_matches=2)
+    assert meta["rows"] == 2
+    assert strength["Pressure"] > strength["Passive"]
+
+
 def test_form_prior_moves_rates_after_external_prior():
     atk, dfn = {"A": 0.0, "B": 0.0}, {"A": 0.0, "B": 0.0}
     lam, mu = match_rates(atk, dfn, 0.0, "A", "B", "", goal_scale=1.0,

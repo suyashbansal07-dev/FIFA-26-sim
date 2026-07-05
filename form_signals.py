@@ -51,6 +51,19 @@ def _xg_edge(feature, home, away, team_is_home):
     return float(np.clip(edge / 3.0, -1.0, 1.0))
 
 
+def _stat_pressure_edge(feature, team_is_home):
+    if not feature:
+        return 0.0
+    edges = []
+    for col, scale in (("shots", 12.0), ("sot", 5.0), ("corners", 8.0), ("possession", 35.0)):
+        hv, av = feature.get(f"home_{col}"), feature.get(f"away_{col}")
+        if pd.isna(hv) or pd.isna(av):
+            continue
+        edge = (float(hv) - float(av)) / scale
+        edges.append(float(np.clip(edge if team_is_home else -edge, -1.0, 1.0)))
+    return float(np.mean(edges)) if edges else 0.0
+
+
 def _z_map(values):
     teams = list(values)
     s = pd.Series([values[t] for t in teams], dtype="float64")
@@ -91,7 +104,8 @@ def build_recent_form_strength(matches, as_of=None, window=6, features=None,
             expected = _expected_score(team, opp, external_strength)
             gd_edge = float(np.clip((gf - ga) / 3.0, -1.0, 1.0))
             xg_edge = _xg_edge(feat, row.home_team, row.away_team, is_home)
-            quality = (score - expected) + 0.12 * gd_edge + 0.18 * xg_edge
+            stat_edge = _stat_pressure_edge(feat, is_home)
+            quality = (score - expected) + 0.12 * gd_edge + 0.18 * xg_edge + 0.08 * stat_edge
             hist.setdefault(team, []).append({"date": row.date, "quality": quality})
     raw = {}
     for team, rows in hist.items():
