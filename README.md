@@ -30,8 +30,9 @@ forecast out-of-sample — wrapped in a small Flask web UI.
 - **Evidence discipline** — walk-forward backtest with reliability bins and
   overfit gap, an append-only forward-forecast ledger scored only pre-match
   (no leakage), and a written [evidence log](docs/EVIDENCE_LOG.md).
-- **Interactive loops** — what-if winner pinning, tunable half-life / friendly
-  weight / goal-scale / sampler knobs, any-matchup predictor with scoreline heatmap.
+- **Interactive loops** — shareable what-if winner pinning, counterfactual
+  played-slot rewrites, tunable half-life / friendly weight / goal-scale /
+  sampler knobs, any-matchup predictor with scoreline heatmap.
 
 ## Quickstart
 

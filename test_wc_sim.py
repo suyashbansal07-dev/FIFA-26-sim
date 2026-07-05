@@ -290,7 +290,8 @@ def test_load_state_attaches_external_strength_after_reload():
                 server.EXTERNAL_DIR / "project_team_enrichment.csv", index=False)
             (server.EXTERNAL_DIR / "external_meta.json").write_text(json.dumps({"source": "test"}))
             server.STATE_FILE.write_text(json.dumps({
-                "payload": {"meta": {}, "ratings": [{"team": "Canada"}]},
+                "payload": {"meta": {}, "bracket": [{"team": "Canada", "bronze": 0.0}],
+                            "ratings": [{"team": "Canada"}]},
                 "pens": {},
                 "params": {"attack": {"Canada": 0.1}, "defence": {"Canada": -0.1},
                            "hfa": 0.2, "rho": -0.08},
@@ -305,6 +306,27 @@ def test_load_state_attaches_external_strength_after_reload():
             server.STATE_FILE = old_state_file
             server.EXTERNAL_DIR = old_external_dir
             server._load_form_strength = old_form_loader
+            server.STATE.clear()
+            server.STATE.update(old_state)
+
+
+def test_load_state_rejects_stale_no_bronze_payload():
+    import json
+    import server
+    with TemporaryDirectory() as d:
+        old_state_file = server.STATE_FILE
+        old_state = {k: v for k, v in server.STATE.items()}
+        server.STATE_FILE = Path(d) / "state.json"
+        try:
+            server.STATE_FILE.write_text(json.dumps({
+                "payload": {"meta": {}, "bracket": [{"team": "Canada"}], "ratings": []},
+                "pens": {},
+                "params": {"attack": {}, "defence": {}, "hfa": 0.0, "rho": 0.0},
+            }))
+            assert not server.load_state()
+            assert server.STATE.get("payload") is old_state.get("payload")
+        finally:
+            server.STATE_FILE = old_state_file
             server.STATE.clear()
             server.STATE.update(old_state)
 

@@ -416,9 +416,16 @@ def refresh():
     return STATE["payload"]["meta"]
 
 
+def _state_compatible(payload):
+    return bool(payload and payload.get("bracket")
+                and all("bronze" in row for row in payload["bracket"]))
+
+
 def load_state():
     if STATE_FILE.exists():
         s = json.loads(STATE_FILE.read_text())
+        if not _state_compatible(s.get("payload")):
+            return False
         STATE["payload"] = s["payload"]
         STATE["pens"] = s.get("pens", {})
         p = s["params"]

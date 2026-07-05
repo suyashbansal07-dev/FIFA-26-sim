@@ -307,6 +307,10 @@ single Morocco/Canada hit or miss from auto-tuning the model.
 - Separate counterfactual mode now allows played-slot rewrites, e.g. "what if
   Canada had beaten Morocco", and drops downstream known facts that depended on
   the real result before re-simulating.
+- Cached server state now rejects stale no-bronze payloads on startup, forcing a
+  rebuild when the bracket schema changes instead of serving old JSON.
+- The web UI exposes bronze/third-place odds when present and preserves
+  recomputed what-if pins in the URL hash for reopening a scenario.
 - /api/sample draws parameters from a random bootstrap sample when the ensemble
   is active (scoreline noise + estimation noise).
 - Verified live: async job 67s to idle; QF-1 pin gives coherent conditional

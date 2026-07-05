@@ -290,6 +290,39 @@ function syncPinButton() {
   $('whatifBtn').textContent = `Recompute pinned (${n})`;
 }
 
+function pinsParam() {
+  return Object.entries(PINS).map(([k, v]) => `${encodeURIComponent(k)}:${encodeURIComponent(v)}`).join(',');
+}
+
+function updateShareUrl(counterfactual) {
+  if (!Object.keys(PINS).length) {
+    history.replaceState(null, '', location.pathname + location.search);
+    return;
+  }
+  const q = new URLSearchParams();
+  q.set('pins', pinsParam());
+  if (counterfactual) q.set('cf', '1');
+  q.set('sims', $('knobSims').value);
+  q.set('sampler', $('knobSampler').value);
+  history.replaceState(null, '', `#${q.toString()}`);
+}
+
+function applyShareState() {
+  const q = new URLSearchParams(location.hash.slice(1));
+  const pins = q.get('pins');
+  if (!pins) return false;
+  PINS = {};
+  for (const item of pins.split(',')) {
+    const [slot, team] = item.split(':').map(decodeURIComponent);
+    if (slot && team) PINS[slot] = team;
+  }
+  $('counterfactualMode').checked = q.get('cf') === '1';
+  if (q.get('sims')) $('knobSims').value = q.get('sims');
+  if (q.get('sampler')) $('knobSampler').value = q.get('sampler');
+  syncPinButton();
+  return Object.keys(PINS).length > 0;
+}
+
 function setCounterfactualMode() {
   if (!$('counterfactualMode').checked) {
     for (const slot of Object.keys(PINS)) {
@@ -324,16 +357,17 @@ function championDeltas(bracket, whatif) {
 function renderOdds(bracket, consensus, whatif, counterfactual=false) {
   CURRENT = { bracket, consensus };
   const deltas = whatif ? {} : championDeltas(bracket, whatif);
+  const hasBronze = bracket.some(r => r.bronze != null);
   const rows = bracket.map(r =>
     `<tr><td>${r.team}</td>
      <td class="num">${pct(r.qf)}</td><td class="num">${pct(r.sf)}</td>
-     <td class="num">${pct(r.final)}</td><td class="num">${pct(r.champion)}${
+     <td class="num">${pct(r.final)}</td>${hasBronze ? `<td class="num">${pct(r.bronze || 0)}</td>` : ''}<td class="num">${pct(r.champion)}${
        deltas[r.team] ? `<span class="delta ${deltas[r.team] > 0 ? 'up' : 'down'}"
          title="vs previous refresh">${deltas[r.team] > 0 ? '▲' : '▼'}${Math.abs(deltas[r.team]).toFixed(1)}</span>` : ''}</td>
      <td><span class="bar" style="width:${Math.max(2, 220 * r.champion)}px"></span></td></tr>`).join('');
   $('bracketTbl').innerHTML =
     `<tr><th>Team</th><th class="num">reach QF</th><th class="num">reach SF</th>
-     <th class="num">reach final</th><th class="num">champion</th><th></th></tr>` + rows;
+     <th class="num">reach final</th>${hasBronze ? '<th class="num">bronze</th>' : ''}<th class="num">champion</th><th></th></tr>` + rows;
   const paths = (consensus ? consensus.top_paths : []).map((t, i) => {
     const fw = t.path['F'], sf = [t.path['SF-1'], t.path['SF-2']];
     const ru = sf[0] === fw ? sf[1] : sf[0];
@@ -516,13 +550,14 @@ async function doRefresh() {
   b.disabled = false; b.textContent = 'Refresh';
 }
 
-async function doWhatif() {
+async function doWhatif(updateUrl=true) {
   if (!Object.keys(PINS).length) { alert('pin at least one winner first (tap a team in the bracket)'); return; }
   try {
     const r = await j('/api/whatif', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                        body: JSON.stringify({ overrides: PINS, sims: +$('knobSims').value,
                                                               sampler: $('knobSampler').value,
                                                               counterfactual: $('counterfactualMode').checked }) });
+    if (updateUrl) updateShareUrl(r.counterfactual);
     renderOdds(r.bracket, r.consensus, true, r.counterfactual);
   } catch (e) { alert(e.message); }
 }
@@ -531,6 +566,7 @@ function resetWhatif() {
   PINS = {};
   $('counterfactualMode').checked = false;
   syncPinButton();
+  updateShareUrl(false);
   renderOdds(DATA.bracket, DATA.consensus, false);
 }
 
@@ -589,6 +625,7 @@ async function load() {
   $('selHome').onchange = $('selAway').onchange = syncVenue;
   syncVenue();
   loadBacktest();
+  if (applyShareState()) doWhatif(false);
 }
 load();
 </script>
