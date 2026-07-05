@@ -74,7 +74,10 @@
   .pickname { font-weight:600; color:var(--pitch); }
   .vsline { font-size:11.5px; color:var(--mut); }
   /* --- detail / heatmap --- */
-  #detail { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  #detail { background:var(--card); border:1px solid var(--line); border-radius:8px;
+            padding:14px 16px; overflow-x:auto; }
+  .delta { font-size:11px; font-weight:600; margin-left:4px; }
+  .delta.up { color:var(--pitch2); } .delta.down { color:var(--terra); }
   .seg { display:flex; height:10px; border-radius:5px; overflow:hidden; margin:8px 0 4px; }
   .seg div:nth-child(1){background:var(--pitch2)} .seg div:nth-child(2){background:var(--draw)}
   .seg div:nth-child(3){background:var(--terra)}
@@ -221,7 +224,9 @@ function teamRow(fx, team, opp) {
     return `<div class="${cls}"><span>${team}</span><span>${fx.winner === team ? '✓' : ''}</span></div>`;
   }
   const pin = PINS[fx.id] === team ? ' pinned' : '';
-  return `<div class="team clickable${pin}" onclick="togglePin('${fx.id}','${team}')"
+  return `<div class="team clickable${pin}" role="button" tabindex="0"
+    onclick="togglePin('${fx.id}','${team}')"
+    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePin('${fx.id}','${team}')}"
     title="pin ${team} as what-if winner"><span>${team}</span><span>${pct(winP)}</span></div>`;
 }
 
@@ -240,20 +245,25 @@ function laterNode(slot, label, picks, childSlots) {
 function renderChart(consensus) {
   const picks = Object.fromEntries((consensus ? consensus.consensus_path.picks : []).map(p => [p.slot, p]));
   const { r16, qfs, sfs, f } = treeOrder();
-  const r16node = fx => `<div class="node">
+  const matchNode = (fx, label) => `<div class="node">
       <div class="hd" onclick='showDetail(DATA.fixtures.find(x => x.id === "${fx.id}"))'>
-        <span>${fx.id}</span><span>${fx.date.slice(5)} · ${fx.venue}</span></div>
+        <span>${label || fx.id}</span><span>${fx.date.slice(5)} · ${fx.venue}</span></div>
       ${teamRow(fx, fx.home)}${teamRow(fx, fx.away)}</div>`;
+  // later slots become real interactive fixtures the moment both feeders are decided
+  const slotNode = (slot, label, childSlots) => {
+    const fx = DATA.fixtures.find(x => x.id === slot);
+    return fx ? matchNode(fx, label) : laterNode(slot, label, picks, childSlots);
+  };
   const duo = inner => `<div class="duo">${inner}</div>`;
   $('chart').innerHTML =
     `<div class="rlabel">Round of 16</div><div class="rlabel">Quarterfinals</div>
      <div class="rlabel">Semifinals</div><div class="rlabel">Final</div>
-     <div class="round">${[0,2,4,6].map(i => duo(r16node(r16[i]) + r16node(r16[i+1]))).join('')}</div>
+     <div class="round">${[0,2,4,6].map(i => duo(matchNode(r16[i]) + matchNode(r16[i+1]))).join('')}</div>
      <div class="round">${[0,2].map(i => duo(
-        laterNode(qfs[i].id, 'Quarterfinal', picks, qfs[i].from) +
-        laterNode(qfs[i+1].id, 'Quarterfinal', picks, qfs[i+1].from))).join('')}</div>
-     <div class="round">${duo(sfs.map(s => laterNode(s.id, 'Semifinal', picks, s.from)).join(''))}</div>
-     <div class="round">${laterNode(f.id, 'Final · Jul 19', picks, f.from)}</div>`;
+        slotNode(qfs[i].id, 'Quarterfinal', qfs[i].from) +
+        slotNode(qfs[i+1].id, 'Quarterfinal', qfs[i+1].from))).join('')}</div>
+     <div class="round">${duo(sfs.map(s => slotNode(s.id, 'Semifinal', s.from)).join(''))}</div>
+     <div class="round">${slotNode(f.id, 'Final · Jul 19', f.from)}</div>`;
   $('consensusLine').hidden = !consensus;
   if (consensus) {
     $('consensusLine').innerHTML = `🏆 Consensus champion: <b>${consensus.modal_champion.team}</b>
@@ -278,12 +288,34 @@ function syncPinButton() {
 
 /* ---------- odds + paths ---------- */
 let CURRENT = { bracket: null, consensus: null };
+function championDeltas(bracket, whatif) {
+  // trend vs the previous refresh (localStorage); frozen during what-if views
+  let prev = {};
+  try { prev = JSON.parse(localStorage.getItem('prevChamp') || '{}'); } catch (e) {}
+  const deltas = {};
+  for (const r of bracket) {
+    const d = (r.champion - (prev[r.team] ?? r.champion)) * 100;
+    if (Math.abs(d) >= 0.3) deltas[r.team] = d;
+  }
+  if (!whatif) {
+    const gen = DATA.meta.generated;
+    if (localStorage.getItem('prevChampGen') !== gen) {
+      localStorage.setItem('prevChamp', JSON.stringify(Object.fromEntries(bracket.map(r => [r.team, r.champion]))));
+      localStorage.setItem('prevChampGen', gen);
+    }
+  }
+  return deltas;
+}
+
 function renderOdds(bracket, consensus, whatif) {
   CURRENT = { bracket, consensus };
+  const deltas = whatif ? {} : championDeltas(bracket, whatif);
   const rows = bracket.map(r =>
     `<tr><td>${r.team}</td>
      <td class="num">${pct(r.qf)}</td><td class="num">${pct(r.sf)}</td>
-     <td class="num">${pct(r.final)}</td><td class="num">${pct(r.champion)}</td>
+     <td class="num">${pct(r.final)}</td><td class="num">${pct(r.champion)}${
+       deltas[r.team] ? `<span class="delta ${deltas[r.team] > 0 ? 'up' : 'down'}"
+         title="vs previous refresh">${deltas[r.team] > 0 ? '▲' : '▼'}${Math.abs(deltas[r.team]).toFixed(1)}</span>` : ''}</td>
      <td><span class="bar" style="width:${Math.max(2, 220 * r.champion)}px"></span></td></tr>`).join('');
   $('bracketTbl').innerHTML =
     `<tr><th>Team</th><th class="num">reach QF</th><th class="num">reach SF</th>
@@ -301,13 +333,15 @@ function renderOdds(bracket, consensus, whatif) {
 
 function renderStaticBracket() {
   const picks = Object.fromEntries((DATA.consensus?.consensus_path?.picks || []).map(p => [p.slot, p]));
+  const RND = { r16: 'R16', qf: 'QF', sf: 'SF', final: 'F' };
   const r16Rows = DATA.fixtures.map(fx => {
     const p = picks[fx.id] || {};
     const winner = fx.played ? fx.winner : p.winner;
     const support = fx.played ? 'played' : pct(p.slot_p ?? p.conditional_p ?? 0);
-    return `<tr><td>R16</td><td>${fx.id}</td><td>${fx.home} vs ${fx.away}</td><td><b>${winner}</b></td><td class="num">${support}</td></tr>`;
+    return `<tr><td>${RND[fx.round] || 'R16'}</td><td>${fx.id}</td><td>${fx.home} vs ${fx.away}</td><td><b>${winner}</b></td><td class="num">${support}</td></tr>`;
   });
-  const qfRows = DATA.tree.qf.map(fx => {
+  const inFixtures = new Set(DATA.fixtures.map(fx => fx.id));
+  const qfRows = DATA.tree.qf.filter(fx => !inFixtures.has(fx.id)).map(fx => {
     const p = picks[fx.id] || {};
     const teams = fx.from.map(id => (picks[id] || {}).winner || '?').join(' vs ');
     return `<tr><td>QF</td><td>${fx.id}</td><td>${teams}</td><td><b>${p.winner || '?'}</b></td><td class="num">${pct(p.slot_p ?? p.conditional_p ?? 0)}</td></tr>`;
@@ -445,7 +479,7 @@ async function doSample() {
 
 async function doRefresh() {
   const b = $('refreshBtn');
-  b.disabled = true; b.textContent = 'Refreshing…';
+  b.disabled = true; b.textContent = 'Starting…';
   try {
     await j('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
@@ -453,6 +487,13 @@ async function doRefresh() {
                              external_weight: +$('knobEW').value,
                              form_weight: +$('knobTW').value,
                              sims: +$('knobSims').value, sampler: $('knobSampler').value }) });
+    for (let i = 0; i < 400; i++) {              // poll the background job (~20 min cap)
+      await new Promise(r => setTimeout(r, 3000));
+      const s = await j('/api/status');
+      if (s.job.phase === 'error') throw new Error(s.job.error);
+      if (s.job.phase === 'idle') break;
+      b.textContent = `${s.job.phase}… ${s.job.detail || ''}`;
+    }
     PINS = {};
     syncPinButton();
     await load();

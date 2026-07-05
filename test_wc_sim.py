@@ -133,9 +133,10 @@ def test_rps_known_values():
 
 def test_whatif_rejects_impossible_r16_override():
     from server import _validate_overrides
-    bracket = {"r16": [{"id": "R16-1", "home": "Canada", "away": "Morocco"}]}
-    assert _validate_overrides(bracket, {"R16-1": "Canada"}) == []
-    err = _validate_overrides(bracket, {"R16-1": "Brazil"})
+    bracket = {"r16": [{"id": "R16-1", "home": "Canada", "away": "Morocco"}],
+               "qf": [], "sf": [], "final": {"id": "F", "from": ["SF-1", "SF-2"]}}
+    assert _validate_overrides(bracket, {"R16-1": "Canada"}, {}) == []
+    err = _validate_overrides(bracket, {"R16-1": "Brazil"}, {})
     assert err and "R16-1" in err[0] and "Canada" in err[0]
 
 
@@ -299,6 +300,38 @@ def test_consensus_modal_and_coherent():
     top = c["top_paths"][0]
     assert top["count"] == 3 and top["path"] == {
         "R16-1": "A", "R16-2": "C", "QF-1": "A", "SF-1": "A", "F": "A"}
+
+
+def test_resolved_fixtures_advance_round_by_round():
+    import json
+    from pathlib import Path
+    from wc_sim import resolved_fixtures
+    bracket = json.loads((Path(__file__).parent / "bracket_2026.json").read_text())
+    base = resolved_fixtures(bracket, {})
+    assert len(base) == 8 and all(f["round"] == "r16" for f in base), "no winners -> R16 only"
+    known = {"R16-1": "Morocco", "R16-2": "France"}
+    fx = resolved_fixtures(bracket, known)
+    qf1 = next((f for f in fx if f["id"] == "QF-1"), None)
+    assert qf1 and qf1["home"] == "Morocco" and qf1["away"] == "France" and qf1["round"] == "qf"
+    assert len(fx) == 9, "only QF-1 is determined"
+    # full R16 + QF winners -> both SFs form
+    known = {f"R16-{i}": bracket["r16"][i - 1]["home"] for i in range(1, 9)}
+    known.update({f"QF-{i}": "X" for i in range(1, 5)})
+    sfs = [f for f in resolved_fixtures(bracket, known) if f["round"] == "sf"]
+    assert len(sfs) == 2 and all(f["home"] == "X" and f["away"] == "X" for f in sfs)
+
+
+def test_whatif_validation_covers_advanced_slots():
+    import json
+    from pathlib import Path
+    from server import _validate_overrides
+    bracket = json.loads((Path(__file__).parent / "bracket_2026.json").read_text())
+    known = {"R16-1": "Morocco", "R16-2": "France"}
+    assert _validate_overrides(bracket, {"QF-1": "France"}, known) == [], \
+        "determined QF slot must be pinnable"
+    assert _validate_overrides(bracket, {"QF-2": "Spain"}, known), "unformed QF not pinnable"
+    assert _validate_overrides(bracket, {"R16-1": "Canada"}, known), "played slot not re-pinnable"
+    assert _validate_overrides(bracket, {"QF-1": "Brazil"}, known), "non-participant rejected"
 
 
 def test_run_ensemble_mixes_bootstrap_samples():

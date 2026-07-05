@@ -29,8 +29,8 @@ from form_signals import DEFAULT_FORM_WEIGHT, build_recent_form_strength, form_r
 from forward_loop import update_forward_loop
 from match_features import load_match_features
 from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
-                    load_matches, markets, match_rates, run_ensemble, run_tournament,
-                    shootout_rates, team_params)
+                    load_matches, markets, match_rates, resolved_fixtures, run_ensemble,
+                    run_tournament, shootout_rates, team_params)
 
 ROOT = Path(__file__).parent
 STATE_FILE = ROOT / "output" / "state.json"
@@ -373,10 +373,10 @@ def refresh():
             uncertainty = {"mode": "point-estimate"}
 
         fixtures = []
-        for fx in bracket["r16"]:
+        for fx in resolved_fixtures(bracket, known):
             c = card(fx["home"], fx["away"], fx["venue_country"])
-            c.update(id=fx["id"], date=fx["date"], played=fx["id"] in known,
-                     winner=known.get(fx["id"]))
+            c.update(id=fx["id"], date=fx["date"], round=fx["round"],
+                     played=fx["id"] in known, winner=known.get(fx["id"]))
             fixtures.append(c)
 
         STATE["payload"] = {
@@ -477,7 +477,12 @@ def api_sample():
     if not args:
         return jsonify({"error": "need distinct rated teams: ?home=X&away=Y[&venue=C]"}), 400
     home, away, venue = args
-    atk, dfn, hfa, rho = STATE["params"]
+    if STATE["samples"]:  # sample parameter uncertainty too, not just scoreline noise
+        rng0 = np.random.default_rng()
+        ps = STATE["samples"]["samples"][int(rng0.integers(len(STATE["samples"]["samples"])))]
+        atk, dfn, hfa, rho = ps["attack"], ps["defence"], ps["hfa"], ps["rho"]
+    else:
+        atk, dfn, hfa, rho = STATE["params"]
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
                     goal_scale=CFG["goal_scale"],
                     external_strength=STATE.get("external_strength"),
@@ -514,21 +519,72 @@ def _clamp(v, lo, hi):
     return min(max(v, lo), hi)
 
 
-def _validate_overrides(bracket, overrides):
-    slots = {fx["id"]: {fx["home"], fx["away"]} for fx in bracket["r16"]}
+def _validate_overrides(bracket, overrides, known):
+    """Any determined, not-yet-played slot is pinnable (R16 now, QF/SF/F as they form)."""
+    slots = {fx["id"]: {fx["home"], fx["away"]} for fx in resolved_fixtures(bracket, known)}
     errors = []
     for slot, winner in overrides.items():
         if slot not in slots:
-            errors.append(f"{slot} is not pinnable")
+            errors.append(f"{slot} is not pinnable yet")
+        elif slot in known:
+            errors.append(f"{slot} already decided ({known[slot]})")
         elif winner not in slots[slot]:
             errors.append(f"{slot} winner must be one of {sorted(slots[slot])}")
     return errors
 
 
+JOB = {"phase": "idle", "detail": "", "started": None, "error": None}
+JOB_LOCK = threading.Lock()
+
+
+def _run_refresh_job():
+    try:
+        JOB.update(phase="refreshing", detail="scrape + refit + simulate", error=None)
+        refresh()
+        if STATE["samples"] is None:  # stale/absent -> regenerate so the ensemble survives new data
+            from uncertainty import bootstrap_samples
+            JOB.update(phase="bootstrapping",
+                       detail="refitting 16 bootstrap resamples for the uncertainty ensemble")
+            df = load_matches(CFG["years"])
+            bracket = json.loads((ROOT / "bracket_2026.json").read_text())
+            alive = sorted({t for fx in bracket["r16"] for t in (fx["home"], fx["away"])})
+            samples = bootstrap_samples(df, 16, CFG["half_life"], CFG["friendly_weight"],
+                                        required=alive)
+            SAMPLES_FILE.parent.mkdir(exist_ok=True)
+            SAMPLES_FILE.write_text(json.dumps({
+                "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "data_max_date": str(df["date"].max().date()),
+                "boots": 16, "half_life": CFG["half_life"],
+                "friendly_weight": CFG["friendly_weight"], "samples": samples}))
+            JOB.update(phase="refreshing", detail="re-simulating with the fresh ensemble")
+            refresh()
+        JOB.update(phase="idle", detail="")
+    except Exception as e:  # surfaced via /api/status; stale payload keeps serving
+        JOB.update(phase="error", detail="", error=str(e))
+
+
+def _start_refresh_job():
+    with JOB_LOCK:
+        if JOB["phase"] not in ("idle", "error"):
+            return False
+        JOB.update(phase="starting", detail="", error=None,
+                   started=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    threading.Thread(target=_run_refresh_job, daemon=True).start()
+    return True
+
+
 @app.post("/api/refresh")
 def api_refresh():
     _apply_knobs(request.get_json(force=True, silent=True) or {})
-    return jsonify(refresh())
+    started = _start_refresh_job()
+    return jsonify({"started": started, "job": JOB}), 202 if started else 409
+
+
+@app.get("/api/status")
+def api_status():
+    meta = (STATE["payload"] or {}).get("meta", {})
+    return jsonify({"job": JOB, "generated": meta.get("generated"),
+                    "uncertainty": meta.get("uncertainty")})
 
 
 @app.post("/api/whatif")
@@ -541,7 +597,7 @@ def api_whatif():
     if bad:
         return jsonify({"error": f"unknown teams: {bad}"}), 400
     bracket = json.loads((ROOT / "bracket_2026.json").read_text())
-    errors = _validate_overrides(bracket, overrides)
+    errors = _validate_overrides(bracket, overrides, STATE["payload"]["known"])
     if errors:
         return jsonify({"error": "; ".join(errors)}), 400
     known = {**STATE["payload"]["known"], **overrides}
@@ -617,10 +673,8 @@ def api_run_backtest():
 def auto_refresh_loop(hours):
     while True:
         time.sleep(hours * 3600)
-        try:
-            refresh()
-        except Exception as e:  # keep serving stale data if a scheduled scrape fails
-            print(f"auto-refresh failed: {e}")
+        if not _start_refresh_job():
+            print("auto-refresh skipped: a refresh job is already running")
 
 
 def main():
