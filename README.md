@@ -31,7 +31,8 @@ forecast out-of-sample — wrapped in a small Flask web UI.
   shootout winners); refresh re-scrapes, refits, and re-simulates in seconds.
 - **Evidence discipline** — walk-forward backtest with reliability bins and
   overfit gap, an append-only forward-forecast ledger scored only pre-match
-  (no leakage), and a written [evidence log](docs/EVIDENCE_LOG.md).
+  (no leakage), sample-gated calibration feedback, and a written
+  [evidence log](docs/EVIDENCE_LOG.md).
 - **Interactive loops** — shareable what-if winner pinning, counterfactual
   played-slot rewrites, tunable half-life / friendly weight / goal-scale /
   sampler knobs, any-matchup predictor with scoreline heatmap.
@@ -144,7 +145,7 @@ aggregate under-goals signal to fix by blindly inflating rates.
 | `external_data.py` | Transfermarkt player, national-team, market, chemistry, and FIFA-rank mart (ignored output) |
 | `external_signals.py` | capped model prior from top-11 quality, squad depth, FIFA rank, caps/goals, and chemistry |
 | `backtest.py` | walk-forward RPS/Brier/log-loss, scoreline calibration, reliability bins, `--sweep` |
-| `forward_loop.py` | append-only forecast ledger, scored pre-match-only |
+| `forward_loop.py` | append-only forecast ledger, scored pre-match-only, sample-gated calibration policy |
 | `diagnostics.py` | evidence-first bias reports |
 | `bracket_2026.json` | live bracket state (pairings, tree, venues, manual overrides) |
 | `docs/EVIDENCE_LOG.md` | every bias found, fix applied, and decision parked |

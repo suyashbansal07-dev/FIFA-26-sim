@@ -204,8 +204,10 @@ function renderMeta() {
     ? ` · ${m.uncertainty.boots}-refit bootstrap ensemble` : ' · point estimate';
   const cal = m.forward_loop && m.forward_loop.calibration_policy
     ? ` · calibration ${m.forward_loop.calibration_policy.action}` : '';
+  const applied = m.forward_calibration_applied?.applied
+    ? ` · applied ${m.forward_calibration_applied.knob} ${m.forward_calibration_applied.before}→${m.forward_calibration_applied.after}` : '';
   $('meta').textContent = `${m.trained_matches} matches (${m.train_from} → ${m.newest_result}) · ` +
-    `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho}${unc}${cal} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
+    `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho}${unc}${cal}${applied} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
   $('simsNote').textContent = `${m.sims.toLocaleString()} ${m.sampler || 'antithetic'} Monte Carlo paths`;
 }
 

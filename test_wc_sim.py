@@ -250,6 +250,40 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         assert settled["calibration_policy"]["action"] == "hold"
 
 
+def test_server_applies_forward_calibration_once():
+    import json
+    import server
+    with TemporaryDirectory() as d:
+        root = Path(d)
+        old_report, old_applied = server.FORWARD_CALIBRATION, server.FORWARD_CALIBRATION_APPLIED
+        old_weight = server.CFG["external_weight"]
+        server.FORWARD_CALIBRATION = root / "forward_calibration.json"
+        server.FORWARD_CALIBRATION_APPLIED = root / "forward_calibration_applied.json"
+        try:
+            server.CFG["external_weight"] = 0.12
+            server.FORWARD_CALIBRATION.write_text(json.dumps({
+                "generated": "g-hold",
+                "calibration_policy": {"action": "hold", "reason": "need 12", "settled": 2},
+            }))
+            out = server._apply_forward_calibration()
+            assert not out["applied"] and server.CFG["external_weight"] == 0.12
+
+            server.FORWARD_CALIBRATION.write_text(json.dumps({
+                "generated": "g-apply",
+                "calibration_policy": {"action": "allow_slightly_more_prior_confidence",
+                                       "settled": 12},
+            }))
+            out = server._apply_forward_calibration()
+            assert out["applied"] and out["before"] == 0.12 and out["after"] == 0.13
+            again = server._apply_forward_calibration()
+            assert not again["applied"] and again["reason"] == "already applied"
+            assert server.CFG["external_weight"] == 0.13
+        finally:
+            server.FORWARD_CALIBRATION = old_report
+            server.FORWARD_CALIBRATION_APPLIED = old_applied
+            server.CFG["external_weight"] = old_weight
+
+
 def test_match_feature_extracts_stats_and_xg_from_espn_shapes():
     from match_features import attach_features, feature_row_from_event, feature_coverage
     event = {

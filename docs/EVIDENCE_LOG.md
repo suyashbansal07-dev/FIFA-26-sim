@@ -417,3 +417,39 @@ Current full backtest scoreline metrics:
 
 Decision: keep `goal_scale=1.10` for now. The remaining issue is distribution
 shape / exact-score concentration, not aggregate scoring level.
+
+## Forward calibration self-feed guard (2026-07-05)
+
+Before this change the forward loop recorded forecasts and wrote a
+`calibration_policy`, but refreshes only displayed the policy. It did not feed
+any calibration back into future predictions.
+
+Change:
+
+- `server._apply_forward_calibration()` reads the previous
+  `output/forward_calibration.json` at refresh start.
+- If policy is still `hold`, `keep_current_defaults`, or missing, it records no
+  model change.
+- Once the forward loop has enough settled pre-match forecasts and emits
+  `reduce_prior_or_goal_confidence` or `allow_slightly_more_prior_confidence`,
+  refresh applies a single bounded `external_weight` nudge of `-0.01` or
+  `+0.01`.
+- `output/forward_calibration_applied.json` stores the applied report id, so
+  the same report cannot ratchet the weight on every auto-refresh.
+- `meta.forward_calibration_applied` and the header expose whether a nudge was
+  applied.
+
+Current live policy remains `hold` because only `2` settled pre-match forecasts
+exist versus the `12` minimum. That is intentional: the feedback loop is wired,
+but not allowed to tune from two matches.
+
+Validation:
+
+```powershell
+.venv\Scripts\python.exe test_wc_sim.py
+.venv\Scripts\python.exe -m py_compile server.py test_wc_sim.py forward_loop.py
+git diff --check
+```
+
+Result: all self-checks passed, including hold/no-op and apply-once/idempotence
+coverage for the calibration hook.

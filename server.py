@@ -43,6 +43,7 @@ MATCHES_FILE = ROOT / "data" / "matches.csv"
 FEATURES_FILE = ROOT / "data" / "match_features.csv"
 FORWARD_LEDGER = ROOT / "output" / "forward_forecasts.jsonl"
 FORWARD_CALIBRATION = ROOT / "output" / "forward_calibration.json"
+FORWARD_CALIBRATION_APPLIED = ROOT / "output" / "forward_calibration_applied.json"
 app = Flask(__name__, static_folder="web", static_url_path="")
 STATE = {"payload": None, "params": None, "pens": {}, "samples": None,
          "external_strength": {}, "external_meta": {},
@@ -210,6 +211,39 @@ def _read_json(path):
     return json.loads(path.read_text())
 
 
+def _write_json(path, data):
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(data, indent=1))
+
+
+def _apply_forward_calibration():
+    report = _read_json(FORWARD_CALIBRATION) or {}
+    policy = report.get("calibration_policy") or {}
+    action = policy.get("action")
+    if action not in ("reduce_prior_or_goal_confidence", "allow_slightly_more_prior_confidence"):
+        return {"applied": False, "action": action or "none", "reason": policy.get("reason", "no adjustment")}
+    report_id = report.get("generated")
+    state = _read_json(FORWARD_CALIBRATION_APPLIED) or {}
+    if state.get("report_generated") == report_id:
+        return {"applied": False, "action": action, "reason": "already applied",
+                "external_weight": CFG["external_weight"]}
+    delta = -0.01 if action == "reduce_prior_or_goal_confidence" else 0.01
+    before = CFG["external_weight"]
+    after = _clamp(before + delta, *KNOB_RANGES["external_weight"])
+    result = {"applied": after != before, "action": action, "knob": "external_weight",
+              "before": round(before, 4), "after": round(after, 4),
+              "report_generated": report_id, "settled": policy.get("settled")}
+    if after != before:
+        CFG["external_weight"] = after
+        _write_json(FORWARD_CALIBRATION_APPLIED, {
+            **result,
+            "applied_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
+    else:
+        result["reason"] = "at configured bound"
+    return result
+
+
 def _read_jsonl(path):
     if not path.exists():
         return []
@@ -342,6 +376,7 @@ def _load_samples(df):
 def refresh():
     """Scrape -> refit -> re-simulate -> rebuild payload. Serialized by LOCK."""
     with LOCK:
+        calibration_applied = _apply_forward_calibration()
         fetch_meta = fetch_data.fetch(quiet=True)
         df = load_matches(CFG["years"])
         atk, dfn, hfa, rho = team_params(fit_model(df, CFG["half_life"], CFG["friendly_weight"]))
@@ -398,6 +433,7 @@ def refresh():
                      "form_weight": CFG["form_weight"],
                      "sampler": CFG["sampler"],
                      "uncertainty": uncertainty,
+                     "forward_calibration_applied": calibration_applied,
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "fixtures": fixtures,
             "tree": {k: bracket[k] for k in ("qf", "sf", "final")},
