@@ -303,7 +303,10 @@ single Morocco/Canada hit or miss from auto-tuning the model.
   resample refits and re-simulates, so the ensemble no longer silently degrades
   to a point estimate after each matchday.
 - What-if pinning extended to every determined unplayed slot; played slots are
-  now explicitly not re-pinnable (real results are facts).
+  explicitly not re-pinnable by default (real results are facts).
+- Separate counterfactual mode now allows played-slot rewrites, e.g. "what if
+  Canada had beaten Morocco", and drops downstream known facts that depended on
+  the real result before re-simulating.
 - /api/sample draws parameters from a random bootstrap sample when the ensemble
   is active (scoreline noise + estimation noise).
 - Verified live: async job 67s to idle; QF-1 pin gives coherent conditional

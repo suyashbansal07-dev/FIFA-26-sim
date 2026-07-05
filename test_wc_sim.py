@@ -402,13 +402,18 @@ def test_resolved_fixtures_advance_round_by_round():
 def test_whatif_validation_covers_advanced_slots():
     import json
     from pathlib import Path
-    from server import _validate_overrides
+    from server import _known_with_overrides, _validate_overrides
     bracket = json.loads((Path(__file__).parent / "bracket_2026.json").read_text())
     known = {"R16-1": "Morocco", "R16-2": "France"}
     assert _validate_overrides(bracket, {"QF-1": "France"}, known) == [], \
         "determined QF slot must be pinnable"
     assert _validate_overrides(bracket, {"QF-2": "Spain"}, known), "unformed QF not pinnable"
     assert _validate_overrides(bracket, {"R16-1": "Canada"}, known), "played slot not re-pinnable"
+    played_known = {**known, "QF-1": "France", "SF-1": "France"}
+    assert _validate_overrides(bracket, {"R16-1": "Canada"}, played_known, counterfactual=True) == []
+    cf = _known_with_overrides(bracket, played_known, {"R16-1": "Canada"}, counterfactual=True)
+    assert cf["R16-1"] == "Canada"
+    assert "QF-1" not in cf and "SF-1" not in cf
     assert _validate_overrides(bracket, {"QF-1": "Brazil"}, known), "non-participant rejected"
 
 

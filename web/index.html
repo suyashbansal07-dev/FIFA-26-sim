@@ -133,6 +133,7 @@
     <span class="mut">tap a team to pin a what-if winner · tap a match header for the scoreline grid</span>
     <span id="whatifBadge" class="badge gold" hidden>what-if view</span>
     <button id="whatifReset" class="sm" hidden onclick="resetWhatif()">back to real odds</button>
+    <label class="mut"><input id="counterfactualMode" type="checkbox" onchange="setCounterfactualMode()"> counterfactual</label>
     <button id="whatifBtn" class="sm" onclick="doWhatif()" disabled>Recompute pinned (0)</button>
   </h2>
   <div class="chart-wrap"><div class="chart" id="chart"></div></div>
@@ -219,15 +220,18 @@ function treeOrder() {
 
 function teamRow(fx, team, opp) {
   const winP = team === fx.home ? fx.p_home : fx.p_away;
-  if (fx.played) {
+  const cf = $('counterfactualMode')?.checked;
+  if (fx.played && !cf) {
     const cls = fx.winner === team ? 'team winner' : 'team out';
     return `<div class="${cls}"><span>${team}</span><span>${fx.winner === team ? '✓' : ''}</span></div>`;
   }
   const pin = PINS[fx.id] === team ? ' pinned' : '';
-  return `<div class="team clickable${pin}" role="button" tabindex="0"
+  const played = fx.played ? (fx.winner === team ? ' winner' : ' out') : '';
+  const mark = PINS[fx.id] === team ? 'pin' : fx.played && fx.winner === team ? 'âœ“' : pct(winP);
+  return `<div class="team clickable${played}${pin}" role="button" tabindex="0"
     onclick="togglePin('${fx.id}','${team}')"
     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePin('${fx.id}','${team}')}"
-    title="pin ${team} as what-if winner"><span>${team}</span><span>${pct(winP)}</span></div>`;
+    title="pin ${team} as ${fx.played ? 'counterfactual' : 'what-if'} winner"><span>${team}</span><span>${mark}</span></div>`;
 }
 
 function laterNode(slot, label, picks, childSlots) {
@@ -286,6 +290,16 @@ function syncPinButton() {
   $('whatifBtn').textContent = `Recompute pinned (${n})`;
 }
 
+function setCounterfactualMode() {
+  if (!$('counterfactualMode').checked) {
+    for (const slot of Object.keys(PINS)) {
+      if (DATA.fixtures.find(fx => fx.id === slot && fx.played)) delete PINS[slot];
+    }
+  }
+  syncPinButton();
+  renderChart(CURRENT.consensus);
+}
+
 /* ---------- odds + paths ---------- */
 let CURRENT = { bracket: null, consensus: null };
 function championDeltas(bracket, whatif) {
@@ -307,7 +321,7 @@ function championDeltas(bracket, whatif) {
   return deltas;
 }
 
-function renderOdds(bracket, consensus, whatif) {
+function renderOdds(bracket, consensus, whatif, counterfactual=false) {
   CURRENT = { bracket, consensus };
   const deltas = whatif ? {} : championDeltas(bracket, whatif);
   const rows = bracket.map(r =>
@@ -328,6 +342,7 @@ function renderOdds(bracket, consensus, whatif) {
   }).join('');
   $('pathsTbl').innerHTML = `<tr><th></th><th>Final</th><th>Semifinalists</th><th class="num">share</th></tr>` + paths;
   $('whatifBadge').hidden = $('whatifReset').hidden = !whatif;
+  $('whatifBadge').textContent = counterfactual ? 'counterfactual view' : 'what-if view';
   renderChart(consensus);
 }
 
@@ -506,13 +521,15 @@ async function doWhatif() {
   try {
     const r = await j('/api/whatif', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                        body: JSON.stringify({ overrides: PINS, sims: +$('knobSims').value,
-                                                              sampler: $('knobSampler').value }) });
-    renderOdds(r.bracket, r.consensus, true);
+                                                              sampler: $('knobSampler').value,
+                                                              counterfactual: $('counterfactualMode').checked }) });
+    renderOdds(r.bracket, r.consensus, true, r.counterfactual);
   } catch (e) { alert(e.message); }
 }
 
 function resetWhatif() {
   PINS = {};
+  $('counterfactualMode').checked = false;
   syncPinButton();
   renderOdds(DATA.bracket, DATA.consensus, false);
 }

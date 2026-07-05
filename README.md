@@ -115,7 +115,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 | `GET /api/case?home=X&away=Y[&venue=C][&date=YYYY-MM-DD]` | case evidence: result, xG/stats, forward forecast, external prior |
 | `GET /api/sample?home=X&away=Y` | sample one result (ET + pens on draws) |
 | `GET /api/consensus` | modal champion, slot odds, coherent path, top complete finishes |
-| `POST /api/whatif` | pin R16 winners, re-simulate the bracket |
+| `POST /api/whatif` | pin determined winners, re-simulate the bracket; `counterfactual=true` allows played-slot rewrites |
 | `POST /api/refresh` | start async scrape → refit → re-simulate job (accepts knob overrides) |
 | `GET /api/status` | background job phase + last generated timestamp |
 | `GET/POST /api/backtest` | read / recompute walk-forward validation |

@@ -544,10 +544,33 @@ def _clamp(v, lo, hi):
     return min(max(v, lo), hi)
 
 
+def _known_with_overrides(bracket, known, overrides, counterfactual=False):
+    out = dict(known)
+    if counterfactual:
+        children = {}
+        slots = bracket.get("qf", []) + bracket.get("sf", [])
+        slots += [fx for fx in (bracket.get("final"), bracket.get("third_place")) if fx]
+        for fx in slots:
+            for parent in fx.get("from", []):
+                children.setdefault(parent, set()).add(fx["id"])
+        stack, drop = list(overrides), set()
+        while stack:
+            slot = stack.pop()
+            for child in children.get(slot, ()):
+                if child not in drop:
+                    drop.add(child)
+                    stack.append(child)
+        for slot in drop:
+            out.pop(slot, None)
+    out.update(overrides)
+    return out
+
+
 def _validate_overrides(bracket, overrides, known, counterfactual=False):
     """Any determined, not-yet-played slot is pinnable (R16 now, QF/SF/F as they form).
     counterfactual=True additionally allows rewriting played slots ('what if X had won')."""
-    slots = {fx["id"]: {fx["home"], fx["away"]} for fx in resolved_fixtures(bracket, known)}
+    basis = _known_with_overrides(bracket, known, overrides, counterfactual) if counterfactual else known
+    slots = {fx["id"]: {fx["home"], fx["away"]} for fx in resolved_fixtures(bracket, basis)}
     errors = []
     for slot, winner in overrides.items():
         if slot not in slots:
@@ -627,7 +650,7 @@ def api_whatif():
     errors = _validate_overrides(bracket, overrides, STATE["payload"]["known"], counterfactual)
     if errors:
         return jsonify({"error": "; ".join(errors)}), 400
-    known = {**STATE["payload"]["known"], **overrides}
+    known = _known_with_overrides(bracket, STATE["payload"]["known"], overrides, counterfactual)
     sims = int(_clamp(int(body.get("sims", CFG["sims"])), *KNOB_RANGES["sims"]))
     sampler = body.get("sampler", CFG["sampler"])
     if sampler not in SAMPLERS:
@@ -647,7 +670,8 @@ def api_whatif():
                         form_strength=STATE.get("form_strength"),
                         form_weight=CFG["form_weight"])
         probs, paths = run_tournament(sim, bracket, known, sims, sampler, return_paths=True)
-    return jsonify({"overrides": overrides, "sims": sims, "sampler": sampler,
+    return jsonify({"overrides": overrides, "counterfactual": counterfactual,
+                    "known": known, "sims": sims, "sampler": sampler,
                     "consensus": build_consensus(paths, bracket, known),
                     "bracket": sorted(
         ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
