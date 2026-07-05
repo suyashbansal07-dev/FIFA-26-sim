@@ -32,7 +32,7 @@ from forward_loop import update_forward_loop
 from match_features import load_match_features
 from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
                     load_matches, markets, match_rates, resolved_fixtures, run_ensemble,
-                    run_tournament, shootout_rates, team_params)
+                    run_tournament, shootout_rates, team_params, verdict_bracket)
 
 ROOT = Path(__file__).parent
 STATE_FILE = ROOT / "output" / "state.json"
@@ -380,6 +380,12 @@ def refresh():
             c.update(id=fx["id"], date=fx["date"], round=fx["round"],
                      played=fx["id"] in known, winner=known.get(fx["id"]))
             fixtures.append(c)
+        verdict_sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(26), pens=STATE["pens"],
+                                goal_scale=CFG["goal_scale"],
+                                external_strength=STATE["external_strength"],
+                                external_weight=CFG["external_weight"],
+                                form_strength=STATE["form_strength"],
+                                form_weight=CFG["form_weight"])
 
         STATE["payload"] = {
             "meta": {**fetch_meta, "trained_matches": len(df),
@@ -396,6 +402,7 @@ def refresh():
             "fixtures": fixtures,
             "tree": {k: bracket[k] for k in ("qf", "sf", "final")},
             "known": known,
+            "verdict": verdict_bracket(verdict_sim, bracket, known),
             "bracket": sorted(
                 ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
                   "final": round(p[2], 4), "champion": round(p[3], 4),
@@ -418,7 +425,8 @@ def refresh():
 
 def _state_compatible(payload):
     return bool(payload and payload.get("bracket")
-                and all("bronze" in row for row in payload["bracket"]))
+                and all("bronze" in row for row in payload["bracket"])
+                and payload.get("verdict"))
 
 
 def load_state():
@@ -677,8 +685,15 @@ def api_whatif():
                         form_strength=STATE.get("form_strength"),
                         form_weight=CFG["form_weight"])
         probs, paths = run_tournament(sim, bracket, known, sims, sampler, return_paths=True)
+    verdict_sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(26), pens=STATE["pens"],
+                            goal_scale=CFG["goal_scale"],
+                            external_strength=STATE.get("external_strength"),
+                            external_weight=CFG["external_weight"],
+                            form_strength=STATE.get("form_strength"),
+                            form_weight=CFG["form_weight"])
     return jsonify({"overrides": overrides, "counterfactual": counterfactual,
                     "known": known, "sims": sims, "sampler": sampler,
+                    "verdict": verdict_bracket(verdict_sim, bracket, known),
                     "consensus": build_consensus(paths, bracket, known),
                     "bracket": sorted(
         ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),

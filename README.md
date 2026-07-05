@@ -25,6 +25,8 @@ forecast out-of-sample — wrapped in a small Flask web UI.
   championship tails reflect estimation error, not false confidence.
 - **Consensus bracket** — modal champion plus a coherent champion-anchored path,
   individual slot odds for bracket verdicts, and most frequent complete finishes.
+- **Static verdict bracket** - instant forced-pick path from per-match knockout
+  advance probabilities, separate from champion-anchored Monte Carlo consensus.
 - **Self-updating** — dual scrapers (martj42 bulk + ESPN same-day top-up with
   shootout winners); refresh re-scrapes, refits, and re-simulates in seconds.
 - **Evidence discipline** — walk-forward backtest with reliability bins and
@@ -111,7 +113,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 
 | Endpoint | What |
 |---|---|
-| `GET /api/data` | full payload: meta, fixtures + cards, bracket probabilities, consensus, ratings |
+| `GET /api/data` | full payload: meta, fixtures + cards, bracket probabilities, verdict, consensus, ratings |
 | `GET /api/predict?home=X&away=Y[&venue=C]` | Dixon-Coles card for any matchup |
 | `GET /api/case?home=X&away=Y[&venue=C][&date=YYYY-MM-DD]` | case evidence: result, xG/stats, forward forecast, external prior |
 | `GET /api/sample?home=X&away=Y` | sample one result (ET + pens on draws) |
@@ -125,7 +127,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 
 | File | Role |
 |---|---|
-| `wc_sim.py` | model core: fit, grids, vectorized tournament sim, ensemble mixer |
+| `wc_sim.py` | model core: fit, grids, vectorized tournament sim, ensemble mixer, deterministic verdict |
 | `consensus.py` | joint-mode top paths + definitive champion + slot probabilities |
 | `uncertainty.py` | bootstrap refits → `output/param_samples.json` |
 | `server.py` | Flask API + refresh pipeline + auto-refresh loop |
@@ -143,8 +145,6 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 
 ## Roadmap
 
-- **Market anchor** — closing-odds benchmark + optional log-pool blend (needs an
-  odds-API key; parked with rationale in the evidence log).
 - **xG-blended ratings** — ingestion already live; blend activates once the
   settled forward sample is large enough to validate a weight.
 - **Player/lineup layer** — missing-starter rating adjustments from public squad

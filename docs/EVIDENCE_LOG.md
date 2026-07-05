@@ -315,3 +315,33 @@ single Morocco/Canada hit or miss from auto-tuning the model.
   is active (scoreline noise + estimation noise).
 - Verified live: async job 67s to idle; QF-1 pin gives coherent conditional
   odds (Morocco reach-SF -> 0 under a France pin); invalid pins rejected.
+
+## Instant deterministic verdict bracket (2026-07-05)
+
+Problem: with roughly 10 tournament days left, the product needs pre-match
+decisions, not a model that only becomes confident after facts arrive. The
+existing champion-anchored consensus was coherent but could make individual
+slot support look like a conditional artifact.
+
+Change:
+
+- Added `wc_sim.verdict_bracket`: a deterministic forced-pick path built from
+  known facts plus each fixture's knockout `advance_prob` (90 minutes + extra
+  time + penalties), not from champion-conditioned Monte Carlo paths.
+- Added `payload.verdict` and what-if `verdict` responses.
+- The web static bracket now renders that verdict and shows the forced-pick
+  champion separately from championship probability tables.
+- Cached state now rejects payloads without `verdict`, forcing one refresh when
+  the schema changes.
+
+Validation:
+
+```powershell
+.venv\Scripts\python.exe test_wc_sim.py
+.venv\Scripts\python.exe -m py_compile wc_sim.py server.py test_wc_sim.py
+git diff --check
+```
+
+Result: all self-checks passed, including a new guard that played slots are
+100% only as facts while unplayed deterministic support comes from normal
+match-level advance probabilities.

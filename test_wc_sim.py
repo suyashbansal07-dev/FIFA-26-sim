@@ -291,7 +291,8 @@ def test_load_state_attaches_external_strength_after_reload():
             (server.EXTERNAL_DIR / "external_meta.json").write_text(json.dumps({"source": "test"}))
             server.STATE_FILE.write_text(json.dumps({
                 "payload": {"meta": {}, "bracket": [{"team": "Canada", "bronze": 0.0}],
-                            "ratings": [{"team": "Canada"}]},
+                            "ratings": [{"team": "Canada"}],
+                            "verdict": {"champion": "Canada", "matches": []}},
                 "pens": {},
                 "params": {"attack": {"Canada": 0.1}, "defence": {"Canada": -0.1},
                            "hfa": 0.2, "rho": -0.08},
@@ -477,6 +478,24 @@ def test_run_tournament_paths_respect_bracket_tree():
         assert ok.all(), f"{fx['id']} winner must come from {a}/{b}"
     champ_share = sum(p[3] for p in probs.values())
     assert abs(champ_share - 1.0) < 1e-9, "champion probabilities must sum to 1"
+
+
+def test_verdict_bracket_uses_match_advance_probabilities():
+    import json
+    from pathlib import Path
+    from wc_sim import verdict_bracket
+    bracket = json.loads((Path(__file__).parent / "bracket_2026.json").read_text())
+    teams = sorted({t for fx in bracket["r16"] for t in (fx["home"], fx["away"])})
+    atk = {t: 0.08 * i for i, t in enumerate(teams)}
+    dfn = {t: -0.02 * i for i, t in enumerate(teams)}
+    sim = Simulator(atk, dfn, 0.0, -0.05, np.random.default_rng(4))
+    verdict = verdict_bracket(sim, bracket, {"R16-1": "Morocco"})
+    rows = {r["id"]: r for r in verdict["matches"]}
+    assert len(verdict["matches"]) == 16
+    assert rows["R16-1"]["played"] and rows["R16-1"]["support"] == 1.0
+    assert rows["QF-1"]["home"] == "Morocco", "known R16 facts must feed later fixtures"
+    assert verdict["champion"] == rows["F"]["winner"]
+    assert all(0.5 <= r["support"] < 1.0 for r in verdict["matches"] if not r["played"])
 
 
 if __name__ == "__main__":

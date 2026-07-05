@@ -380,26 +380,25 @@ function renderOdds(bracket, consensus, whatif, counterfactual=false) {
   renderChart(consensus);
 }
 
-function renderStaticBracket() {
-  const picks = Object.fromEntries((DATA.consensus?.consensus_path?.picks || []).map(p => [p.slot, p]));
-  const RND = { r16: 'R16', qf: 'QF', sf: 'SF', final: 'F' };
-  const r16Rows = DATA.fixtures.map(fx => {
-    const p = picks[fx.id] || {};
-    const winner = fx.played ? fx.winner : p.winner;
-    const support = fx.played ? 'played' : pct(p.slot_p ?? p.conditional_p ?? 0);
-    return `<tr><td>${RND[fx.round] || 'R16'}</td><td>${fx.id}</td><td>${fx.home} vs ${fx.away}</td><td><b>${winner}</b></td><td class="num">${support}</td></tr>`;
-  });
-  const inFixtures = new Set(DATA.fixtures.map(fx => fx.id));
-  const qfRows = DATA.tree.qf.filter(fx => !inFixtures.has(fx.id)).map(fx => {
-    const p = picks[fx.id] || {};
-    const teams = fx.from.map(id => (picks[id] || {}).winner || '?').join(' vs ');
-    return `<tr><td>QF</td><td>${fx.id}</td><td>${teams}</td><td><b>${p.winner || '?'}</b></td><td class="num">${pct(p.slot_p ?? p.conditional_p ?? 0)}</td></tr>`;
-  });
+function renderStaticBracket(verdict = DATA.verdict, whatif=false) {
+  if (!verdict || !verdict.matches) {
+    $('staticBracketTbl').innerHTML = '';
+    $('staticBracketNote').textContent = 'No deterministic verdict in loaded state; refresh once.';
+    return;
+  }
+  const RND = { r16: 'R16', qf: 'QF', sf: 'SF', final: 'Final', third_place: 'Bronze' };
+  const rows = verdict.matches.map(fx => {
+    const support = fx.played ? 'played' : pct(fx.support);
+    return `<tr><td>${RND[fx.round] || fx.round}</td><td>${fx.id}</td><td>${fx.home} vs ${fx.away}</td>
+      <td><b>${fx.winner}</b></td><td class="num">${support}</td></tr>`;
+  }).join('');
   $('staticBracketTbl').innerHTML =
-    `<tr><th>Round</th><th>Slot</th><th>Matchup</th><th>Definitive pick</th><th class="num">support</th></tr>` +
-    r16Rows.concat(qfRows).join('');
+    `<tr><th>Round</th><th>Slot</th><th>Matchup</th><th>Definitive pick</th><th class="num">advance support</th></tr>` +
+    rows;
+  const stamp = DATA.meta.generated.slice(0, 16).replace('T', ' ');
   $('staticBracketNote').textContent =
-    `Static snapshot from ${DATA.meta.generated.slice(0, 16).replace('T', ' ')}Z; what-if pins do not change this table.`;
+    `${whatif ? 'What-if' : 'Current'} forced-pick champion: ${verdict.champion} (${pct(verdict.champion_match_support)} final support). ` +
+    `Built from per-match knockout advance probabilities, not champion-anchored conditional support. Snapshot ${stamp}Z.`;
 }
 
 function renderRatings() {
@@ -559,6 +558,7 @@ async function doWhatif(updateUrl=true) {
                                                               counterfactual: $('counterfactualMode').checked }) });
     if (updateUrl) updateShareUrl(r.counterfactual);
     renderOdds(r.bracket, r.consensus, true, r.counterfactual);
+    renderStaticBracket(r.verdict, true);
   } catch (e) { alert(e.message); }
 }
 
@@ -568,6 +568,7 @@ function resetWhatif() {
   syncPinButton();
   updateShareUrl(false);
   renderOdds(DATA.bracket, DATA.consensus, false);
+  renderStaticBracket(DATA.verdict, false);
 }
 
 function renderBacktest(b) {
@@ -609,7 +610,7 @@ async function load() {
   DATA = await j('/api/data');
   renderMeta();
   renderOdds(DATA.bracket, DATA.consensus, false);
-  renderStaticBracket();
+  renderStaticBracket(DATA.verdict, false);
   renderRatings();
   renderExternal();
   $('knobHL').value = DATA.meta.half_life_days;

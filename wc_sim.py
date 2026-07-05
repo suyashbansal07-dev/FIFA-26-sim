@@ -340,6 +340,50 @@ def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antitheti
     return {t: p / total for t, p in agg.items()}, {"teams": teams, "winners": winners}
 
 
+def verdict_bracket(sim, bracket, known):
+    """Instant deterministic bracket: known facts plus highest advance-prob picks.
+
+    This is separate from Monte Carlo champion/path consensus. It answers
+    "forced pick right now" without conditioning every slot on one champion.
+    """
+    winners, losers, rows = dict(known), {}, []
+
+    def add(fx, round_name, home, away):
+        played = fx["id"] in known
+        p_home = 1.0 if played and known[fx["id"]] == home else 0.0 if played else sim.advance_prob(
+            home, away, fx["venue_country"])
+        winner = known[fx["id"]] if played else home if p_home >= 0.5 else away
+        support = 1.0 if played else max(p_home, 1.0 - p_home)
+        loser = away if winner == home else home
+        winners[fx["id"]] = winner
+        losers[fx["id"]] = loser
+        rows.append({
+            "id": fx["id"], "round": round_name, "date": fx.get("date"),
+            "home": home, "away": away, "winner": winner, "loser": loser,
+            "played": played, "support": round(float(support), 4),
+            "p_home_advance": round(float(p_home), 4),
+            "p_away_advance": round(float(1.0 - p_home), 4),
+        })
+
+    for fx in bracket["r16"]:
+        add(fx, "r16", fx["home"], fx["away"])
+    for round_name in ("qf", "sf"):
+        for fx in bracket[round_name]:
+            add(fx, round_name, winners[fx["from"][0]], winners[fx["from"][1]])
+    add(bracket["final"], "final",
+        winners[bracket["final"]["from"][0]], winners[bracket["final"]["from"][1]])
+    tp = bracket.get("third_place")
+    if tp:
+        add(tp, "third_place", losers[tp["from"][0]], losers[tp["from"][1]])
+    final = next(r for r in rows if r["id"] == bracket["final"]["id"])
+    return {
+        "mode": "deterministic_advance_prob",
+        "champion": final["winner"],
+        "champion_match_support": final["support"],
+        "matches": rows,
+    }
+
+
 # ---------------- reporting ----------------
 
 def print_match_cards(sim, bracket, known):
