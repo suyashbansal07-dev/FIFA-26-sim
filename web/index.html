@@ -10,6 +10,7 @@
   :root { --paper:#f3f1e7; --card:#fbfaf4; --ink:#20241f; --mut:#77746a; --line:#dcd7c4;
           --pitch:#0f6132; --pitch2:#177a44; --terra:#c05a38; --draw:#aca893; --gold:#b8860b; }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   body { margin:0; background:var(--paper); color:var(--ink);
          font:15px/1.5 Barlow, system-ui, sans-serif; }
   main { max-width:1020px; margin:0 auto; padding:0 16px 56px; }
@@ -86,7 +87,16 @@
                     border-bottom:2px solid var(--pitch); padding-bottom:3px; margin:32px 0 10px; }
   footer { margin-top:40px; font-size:12px; color:var(--mut); border-top:1px solid var(--line);
            padding-top:10px; }
+  .plate { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--gold);
+           border-radius:0 8px 8px 0; padding:8px 12px; margin:10px 0 0; font-size:13.5px; }
+  .plate b { font-family:"Barlow Condensed"; font-weight:700; text-transform:uppercase;
+             letter-spacing:.05em; font-size:17px; color:var(--pitch); }
+  details.knobs { display:inline-block; }
+  details.knobs summary { cursor:pointer; border:none; margin:0; font:inherit; }
   @media (max-width:640px){ header h1{font-size:24px} h2{font-size:17px} }
+  @media print { button, select, input, details.knobs, #detail, footer a { display:none !important; }
+                 header { background:none; color:var(--ink); padding:0 24px; }
+                 header #meta { color:var(--mut); } section { animation:none; } }
 </style>
 </head>
 <body>
@@ -98,15 +108,20 @@
 
 <section>
   <div class="row" style="margin-bottom:6px">
-    <label class="mut">half-life (days) <input id="knobHL" type="number" min="100" max="2000" step="50" style="width:75px"></label>
-    <label class="mut">friendly weight <input id="knobFW" type="number" min="0" max="1" step="0.1" style="width:60px"></label>
-    <label class="mut">goal scale <input id="knobGS" type="number" min="0.8" max="1.3" step="0.05" style="width:65px"></label>
-    <label class="mut">external weight <input id="knobEW" type="number" min="0" max="0.15" step="0.01" style="width:65px"></label>
-    <label class="mut">form weight <input id="knobTW" type="number" min="0" max="0.08" step="0.01" style="width:65px"></label>
-    <label class="mut">sims <select id="knobSims"><option>100000</option><option>500000</option><option>1000000</option></select></label>
-    <label class="mut">sampler <select id="knobSampler"><option>antithetic</option><option>lhs</option><option>sobol</option><option>random</option></select></label>
     <button id="refreshBtn" onclick="doRefresh()">Refresh</button>
     <span class="mut" id="simsNote"></span>
+    <details class="knobs">
+      <summary class="mut">model knobs</summary>
+      <div class="row" style="margin-top:8px">
+        <label class="mut">half-life (days) <input id="knobHL" type="number" min="100" max="2000" step="50" style="width:75px"></label>
+        <label class="mut">friendly weight <input id="knobFW" type="number" min="0" max="1" step="0.1" style="width:60px"></label>
+        <label class="mut">goal scale <input id="knobGS" type="number" min="0.8" max="1.3" step="0.05" style="width:65px"></label>
+        <label class="mut">external weight <input id="knobEW" type="number" min="0" max="0.15" step="0.01" style="width:65px"></label>
+        <label class="mut">form weight <input id="knobTW" type="number" min="0" max="0.08" step="0.01" style="width:65px"></label>
+        <label class="mut">sims <select id="knobSims"><option>100000</option><option>500000</option><option>1000000</option></select></label>
+        <label class="mut">sampler <select id="knobSampler"><option>antithetic</option><option>lhs</option><option>sobol</option><option>random</option></select></label>
+      </div>
+    </details>
   </div>
 </section>
 
@@ -115,16 +130,10 @@
     <span class="mut">tap a team to pin a what-if winner · tap a match header for the scoreline grid</span>
     <span id="whatifBadge" class="badge gold" hidden>what-if view</span>
     <button id="whatifReset" class="sm" hidden onclick="resetWhatif()">back to real odds</button>
-    <button class="sm" onclick="doWhatif()">Recompute pinned</button>
+    <button id="whatifBtn" class="sm" onclick="doWhatif()" disabled>Recompute pinned (0)</button>
   </h2>
   <div class="chart-wrap"><div class="chart" id="chart"></div></div>
-  <p class="mut" id="consensusLine" style="margin:8px 0 0"></p>
-</section>
-
-<section>
-  <h2>Static model bracket <span class="mut">definitive R16 to QF output from the loaded model state</span></h2>
-  <table id="staticBracketTbl"></table>
-  <p class="mut" id="staticBracketNote" style="margin:8px 0 0"></p>
+  <p id="consensusLine" class="plate" hidden></p>
 </section>
 
 <section>
@@ -132,6 +141,12 @@
   <table id="bracketTbl"></table>
   <p class="mut" style="margin:10px 0 4px">Most frequent complete finishes (joint mode):</p>
   <table id="pathsTbl" style="max-width:560px"></table>
+  <details style="margin-top:10px">
+    <summary class="mut" style="font-size:13px; border:none; margin:0; text-transform:none;
+      font-family:Barlow; font-weight:400; letter-spacing:0">static model bracket — definitive R16→QF picks from the loaded state</summary>
+    <table id="staticBracketTbl" style="margin-top:8px"></table>
+    <p class="mut" id="staticBracketNote" style="margin:8px 0 0"></p>
+  </details>
 </section>
 
 <section>
@@ -239,18 +254,26 @@ function renderChart(consensus) {
         laterNode(qfs[i+1].id, 'Quarterfinal', picks, qfs[i+1].from))).join('')}</div>
      <div class="round">${duo(sfs.map(s => laterNode(s.id, 'Semifinal', picks, s.from)).join(''))}</div>
      <div class="round">${laterNode(f.id, 'Final · Jul 19', picks, f.from)}</div>`;
+  $('consensusLine').hidden = !consensus;
   if (consensus) {
-    $('consensusLine').innerHTML = `Consensus champion: <b>${consensus.modal_champion.team}</b>
-      (${pct(consensus.modal_champion.p)} of ${consensus.sims.toLocaleString()} sims) ·
+    $('consensusLine').innerHTML = `🏆 Consensus champion: <b>${consensus.modal_champion.team}</b>
+      <span class="mut">(${pct(consensus.modal_champion.p)} of ${consensus.sims.toLocaleString()} sims ·
       full-path joint support ${(100 * consensus.consensus_path.joint_support).toFixed(3)}% ·
-      green picks show slot probability; hover for path-conditional support`;
+      green picks show slot probability; hover for path-conditional support)</span>`;
   }
 }
 
 function togglePin(slot, team) {
   PINS[slot] = PINS[slot] === team ? undefined : team;
   if (!PINS[slot]) delete PINS[slot];
+  syncPinButton();
   renderChart(CURRENT.consensus);
+}
+
+function syncPinButton() {
+  const n = Object.keys(PINS).length;
+  $('whatifBtn').disabled = !n;
+  $('whatifBtn').textContent = `Recompute pinned (${n})`;
 }
 
 /* ---------- odds + paths ---------- */
@@ -341,6 +364,7 @@ function heatmap(c) {
 function showDetail(c) {
   $('detail').hidden = false;
   $('detail').innerHTML = `
+    <button class="sm" style="float:right" onclick="$('detail').hidden = true">✕ close</button>
     <h3 style="margin:0 0 2px">${c.home} vs ${c.away} <span class="mut">(${c.venue})</span></h3>
     <div class="mut" style="margin-bottom:8px">λ ${c.lam} · μ ${c.mu}</div>
     <div class="seg" style="max-width:420px"><div style="flex:${c.p_home}"></div><div style="flex:${c.p_draw}"></div><div style="flex:${c.p_away}"></div></div>
@@ -430,6 +454,7 @@ async function doRefresh() {
                              form_weight: +$('knobTW').value,
                              sims: +$('knobSims').value, sampler: $('knobSampler').value }) });
     PINS = {};
+    syncPinButton();
     await load();
   } catch (e) { alert('refresh failed: ' + e.message); }
   b.disabled = false; b.textContent = 'Refresh';
@@ -447,6 +472,7 @@ async function doWhatif() {
 
 function resetWhatif() {
   PINS = {};
+  syncPinButton();
   renderOdds(DATA.bracket, DATA.consensus, false);
 }
 
