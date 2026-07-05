@@ -477,7 +477,7 @@ Result:
 
 Coverage details:
 
-- 41 project teams have nonzero `fiwc_minutes`.
+- 43 project teams have nonzero `fiwc_minutes` after usage aliasing.
 - Current bracket examples now have usage minutes/goals/assists in
   `/api/data`: Canada, Morocco, France, Paraguay, United States, Mexico,
   Argentina, Brazil, Norway.
