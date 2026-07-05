@@ -243,3 +243,21 @@ reached it uses favorite predicted-vs-observed gap to recommend one of:
 
 Current live state: one settled forecast, so policy is `hold`. This prevents a
 single Morocco/Canada hit or miss from auto-tuning the model.
+
+## Pipeline Upgrades (2026-07-05)
+
+- Bracket auto-advance: `wc_sim.resolved_fixtures` materializes any slot whose
+  feeder slots have real winners (QF-1 = Morocco vs France appeared the moment
+  both R16 results landed). Cards, forward-ledger forecasts, and what-if pins
+  now follow the tournament round-by-round without editing bracket_2026.json.
+- Async refresh: POST /api/refresh returns immediately; a background job runs
+  scrape -> refit -> simulate and reports progress via GET /api/status. If the
+  bootstrap ensemble is stale for the new data date, the job regenerates 16
+  resample refits and re-simulates, so the ensemble no longer silently degrades
+  to a point estimate after each matchday.
+- What-if pinning extended to every determined unplayed slot; played slots are
+  now explicitly not re-pinnable (real results are facts).
+- /api/sample draws parameters from a random bootstrap sample when the ensemble
+  is active (scoreline noise + estimation noise).
+- Verified live: async job 67s to idle; QF-1 pin gives coherent conditional
+  odds (Morocco reach-SF -> 0 under a France pin); invalid pins rejected.

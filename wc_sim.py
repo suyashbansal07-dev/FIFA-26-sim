@@ -212,6 +212,22 @@ def known_winners(bracket, played, shootouts):
     return known
 
 
+def resolved_fixtures(bracket, known):
+    """Every fixture whose participants are determined: all of R16, later rounds once
+    both feeder slots have real winners. Lets the pipeline advance round-by-round
+    (cards, forecasts, pins) without hand-editing bracket_2026.json."""
+    out = [dict(fx, round="r16") for fx in bracket["r16"]]
+    for rnd in ("qf", "sf"):
+        for fx in bracket[rnd]:
+            if all(k in known for k in fx["from"]):
+                out.append(dict(fx, round=rnd,
+                                home=known[fx["from"][0]], away=known[fx["from"][1]]))
+    f = bracket["final"]
+    if all(k in known for k in f["from"]):
+        out.append(dict(f, round="final", home=known[f["from"][0]], away=known[f["from"][1]]))
+    return out
+
+
 def run_tournament(sim, bracket, known, n_sims, sampler="antithetic", return_paths=False):
     """Returns {team: [p_reach_QF, p_reach_SF, p_reach_Final, p_champion]};
     with return_paths also ({"teams": [...], "winners": {slot: int16 array}}) per sim."""
