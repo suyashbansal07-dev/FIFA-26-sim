@@ -46,6 +46,7 @@ Optional extras:
 
 ```powershell
 .venv\Scripts\python uncertainty.py --boots 16   # bootstrap ensemble (server auto-uses)
+.venv\Scripts\python fifa_rankings.py            # live FIFA ranking snapshot -> tracked CSV
 .venv\Scripts\python external_data.py            # player/market/chemistry mart -> model + UI
 .venv\Scripts\python backtest.py                 # walk-forward validation -> UI
 .venv\Scripts\python backtest.py --sweep         # hyperparameter grid by OOS RPS
@@ -95,12 +96,12 @@ flowchart LR
 
 | Metric | Model | Uniform | Train-freq |
 |---|---:|---:|---:|
-| RPS current calibrated (391 OOS matches, Jan-Jul 2026) | **0.1537** | 0.2360 | 0.2207 |
-| Brier current calibrated | 0.4884 | - | - |
-| Log-loss current calibrated | 0.8385 | - | - |
+| RPS current calibrated (392 OOS matches, Jan-Jul 2026) | **0.1525** | 0.2361 | 0.2211 |
+| Brier current calibrated | 0.4855 | - | - |
+| Log-loss current calibrated | 0.8345 | - | - |
 | Current calibrated gap | 0.1460 in-sample -> +0.0077 OOS | - | - |
 
-In-sample RPS 0.1460 -> out-of-sample gap +0.0077 (mild, monitored). Reliability
+In-sample RPS 0.1453 -> out-of-sample gap +0.0072 (mild, monitored). Reliability
 bins and the forward ledger (first settled knockout forecast: Morocco favorite
 at 45.1%, hit) live in the UI's *Model validation* section and
 [docs/EVIDENCE_LOG.md](docs/EVIDENCE_LOG.md).
@@ -129,6 +130,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 | `server.py` | Flask API + refresh pipeline + auto-refresh loop |
 | `web/index.html` | single-file vanilla-JS UI |
 | `fetch_data.py` | scrapers: martj42 bulk + ESPN top-up (shootouts, aliases, UTC skew) |
+| `fifa_rankings.py` | live FIFA ranking sync from `fifa.com/en/world-rankings` |
 | `match_features.py` | ESPN match stats / xG ingestion (diagnostics only, forward-safe) |
 | `external_data.py` | Transfermarkt player, national-team, market, chemistry, and FIFA-rank mart (ignored output) |
 | `external_signals.py` | capped model prior from market, FIFA rank, caps/goals, and chemistry |
@@ -150,6 +152,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 ## Data & acknowledgements
 
 - Results: [martj42/international_results](https://github.com/martj42/international_results) (CC0), ESPN public scoreboard API.
+- Rankings: [FIFA/Coca-Cola World Rankings](https://www.fifa.com/en/world-rankings).
 - Method: Dixon & Coles (1997), *Modelling Association Football Scores and
   Inefficiencies in the Football Betting Market*, JRSS-C 46(2).
 - MLE engine: [penaltyblog](https://github.com/martineastwood/penaltyblog).

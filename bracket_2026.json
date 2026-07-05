@@ -21,5 +21,6 @@
     {"id": "SF-2", "from": ["QF-3", "QF-4"], "venue_country": "United States", "date": "2026-07-15"}
   ],
   "final": {"id": "F", "from": ["SF-1", "SF-2"], "venue_country": "United States", "date": "2026-07-19"},
+  "third_place": {"id": "TP", "from": ["SF-1", "SF-2"], "venue_country": "United States", "date": "2026-07-18"},
   "manual_results": {}
 }

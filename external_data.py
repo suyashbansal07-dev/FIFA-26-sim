@@ -16,6 +16,7 @@ from pathlib import Path
 
 import duckdb
 
+from fifa_rankings import TEAM_ALIASES
 from wc_sim import ROOT
 
 OUT = ROOT / "output" / "external"
@@ -55,11 +56,16 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
 
     con.sql(f"create or replace temp view players as select * from read_csv_auto('{_table_path('players', out_dir)}')")
     con.sql(f"create or replace temp view national_teams as select * from read_csv_auto('{_table_path('national_teams', out_dir)}')")
+    alias_rows = ", ".join(
+        f"('{k.replace("'", "''")}', '{v.replace("'", "''")}')" for k, v in TEAM_ALIASES.items()
+    )
+    con.sql(f"create or replace temp view team_aliases(source, team) as values {alias_rows}")
     if FIFA_RANKINGS.exists():
         con.sql(f"""
             create or replace temp view fifa_rankings as
-            select team, fifa_ranking, source_date, source
-            from read_csv_auto('{_sql_path(FIFA_RANKINGS)}')
+            select coalesce(a.team, fr.team) as team, fr.fifa_ranking, fr.source_date, fr.source
+            from read_csv_auto('{_sql_path(FIFA_RANKINGS)}') fr
+            left join team_aliases a on a.source = fr.team
         """)
     else:
         con.sql("""
@@ -69,7 +75,7 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         """)
     con.sql("""
         create or replace temp view player_rank as
-        select nt.national_team_id, nt.name as team, nt.confederation,
+        select nt.national_team_id, coalesce(nta.team, nt.name) as team, nt.confederation,
                coalesce(fr.fifa_ranking, nt.fifa_ranking) as fifa_ranking,
                nt.fifa_ranking as transfermarkt_fifa_ranking,
                nt.squad_size, nt.average_age, nt.total_market_value,
@@ -81,7 +87,8 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
                    order by p.market_value_in_eur desc nulls last, p.international_caps desc nulls last
                ) as market_rank
         from national_teams nt
-        left join fifa_rankings fr on fr.team = nt.name
+        left join team_aliases nta on nta.source = nt.name
+        left join fifa_rankings fr on fr.team = coalesce(nta.team, nt.name)
         left join players p on p.current_national_team_id = nt.national_team_id
         where nt.last_season >= 2025
     """)
@@ -264,7 +271,7 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
     """).fetchdf()
     meta = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "source": "dcaribou/transfermarkt-datasets + FIFA rankings override",
+        "source": "dcaribou/transfermarkt-datasets + FIFA live rankings",
         "source_base": BASE,
         "fifa_rankings": str(FIFA_RANKINGS) if FIFA_RANKINGS.exists() else None,
         "start": start,

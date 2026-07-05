@@ -70,6 +70,26 @@ def test_external_strength_uses_rank_only_fallback_without_fake_player_data():
     assert strength["B"] < strength["Cape Verde"] < strength["A"]
 
 
+def test_fifa_live_ranking_rows_are_canonicalized():
+    from fifa_rankings import rows_from_payload
+    payload = {"Results": [
+        {"TeamName": [{"Locale": "en-GB", "Description": "France"}], "Rank": 1,
+         "IdCountry": "FRA", "TotalPoints": 1925.861, "PrevRank": 3,
+         "RankingMovement": 2, "ConfederationName": "UEFA"},
+        {"TeamName": [{"Locale": "en-GB", "Description": "Cabo Verde"}], "Rank": 64,
+         "IdCountry": "CPV", "TotalPoints": 1402.966, "PrevRank": 67,
+         "RankingMovement": 3, "ConfederationName": "CAF"},
+        {"TeamName": [{"Locale": "en-GB", "Description": "USA"}], "Rank": 17,
+         "IdCountry": "USA", "TotalPoints": 1647.0, "PrevRank": 17,
+         "RankingMovement": 0, "ConfederationName": "CONCACAF"},
+    ]}
+    rows = rows_from_payload(payload, source_date="2026-07-05")
+    names = {r["team"]: r for r in rows}
+    assert names["France"]["fifa_ranking"] == 1
+    assert names["Cape Verde"]["country_code"] == "CPV"
+    assert names["United States"]["country_code"] == "USA"
+
+
 def test_form_strength_rewards_opponent_adjusted_recent_run():
     from form_signals import build_recent_form_strength, form_rate_adjustment
     rows = pd.DataFrame([
@@ -229,6 +249,43 @@ def test_external_payload_enriches_ratings():
             assert out["ratings"][0]["top23_market_value"] == 199500000
         finally:
             server.EXTERNAL_DIR = old
+
+
+def test_load_state_attaches_external_strength_after_reload():
+    import json
+    import server
+    with TemporaryDirectory() as d:
+        root = Path(d)
+        old_state_file, old_external_dir = server.STATE_FILE, server.EXTERNAL_DIR
+        old_form_loader = server._load_form_strength
+        old_state = {k: v for k, v in server.STATE.items()}
+        server.STATE_FILE = root / "state.json"
+        server.EXTERNAL_DIR = root / "external"
+        server.EXTERNAL_DIR.mkdir()
+        try:
+            pd.DataFrame([{"team": "Canada", "fifa_ranking": 16,
+                           "top23_market_value": 199500000, "squad_caps": 1184,
+                           "squad_goals": 158, "chemistry_score": 0.7}]).to_csv(
+                server.EXTERNAL_DIR / "project_team_enrichment.csv", index=False)
+            (server.EXTERNAL_DIR / "external_meta.json").write_text(json.dumps({"source": "test"}))
+            server.STATE_FILE.write_text(json.dumps({
+                "payload": {"meta": {}, "ratings": [{"team": "Canada"}]},
+                "pens": {},
+                "params": {"attack": {"Canada": 0.1}, "defence": {"Canada": -0.1},
+                           "hfa": 0.2, "rho": -0.08},
+            }))
+            server.STATE.update({"payload": None, "external_strength": {}, "form_strength": {}})
+            server._load_form_strength = lambda: ({}, {})
+            assert server.load_state()
+            meta = server.STATE["payload"]["meta"]["external_data"]
+            assert meta["strength_rows"] == 1
+            assert server.STATE["payload"]["ratings"][0]["fifa_ranking"] == 16
+        finally:
+            server.STATE_FILE = old_state_file
+            server.EXTERNAL_DIR = old_external_dir
+            server._load_form_strength = old_form_loader
+            server.STATE.clear()
+            server.STATE.update(old_state)
 
 
 def test_forward_safe_context_uses_only_prior_matches():

@@ -6,7 +6,7 @@ train-frequency baselines, plus an in-sample vs out-of-sample gap (overfit check
 and favorite-calibration reliability bins. Single runs write output/backtest.json
 (served to the web UI).
 
-Run:  .venv/Scripts/python backtest.py [--start 2026-01-01] [--refit-days 30]
+Run:  .venv/Scripts/python backtest.py [--start 2026-01-01] [--refit-days 45]
                                        [--half-life 550] [--friendly-weight 1.0]
 Sweep: .venv/Scripts/python backtest.py --sweep   (grid over half-life x friendly weight)
 """
@@ -149,7 +149,7 @@ def write_backtest(start="2026-01-01", refit_days=45, train_years=4.0,
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--start", default="2026-01-01")
-    ap.add_argument("--refit-days", type=int, default=30)
+    ap.add_argument("--refit-days", type=int, default=45)
     ap.add_argument("--train-years", type=float, default=4.0)
     ap.add_argument("--half-life", type=float, default=1100.0)
     ap.add_argument("--friendly-weight", type=float, default=1.0)

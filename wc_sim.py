@@ -191,24 +191,40 @@ def _uniforms(rng, n_sims, n_draws, sampler="antithetic"):
     raise ValueError(f"unknown sampler: {sampler}")
 
 
+def _pair_rows(df, home, away):
+    return df[(((df["home_team"] == home) & (df["away_team"] == away))
+               | ((df["home_team"] == away) & (df["away_team"] == home)))]
+
+
+def _result_winner(played, shootouts, home, away):
+    """Winner of a played match between two teams (either orientation), else None."""
+    m = _pair_rows(played, home, away)
+    if m.empty:
+        return None
+    row = m.iloc[-1]
+    if row["home_score"] != row["away_score"]:
+        return row["home_team"] if row["home_score"] > row["away_score"] else row["away_team"]
+    s = _pair_rows(shootouts, home, away)
+    return s.iloc[-1]["winner"] if not s.empty else None
+
+
 def known_winners(bracket, played, shootouts):
-    """Real-world winners for knockout slots already decided (data first, manual override wins)."""
-    known = {}
+    """Real-world winners for knockout slots already decided (manual overrides win).
+    Iterates with resolved_fixtures so later rounds resolve as soon as their feeder
+    winners identify the participants — QF/SF/final results auto-consume too."""
+    known = dict(bracket.get("manual_results", {}))
     ko = played[played["date"] >= "2026-06-28"]
-    for fx in bracket["r16"] + bracket["qf"] + bracket["sf"] + [bracket["final"]]:
-        if "home" not in fx:
-            continue  # QF+ fixtures have no fixed teams until simulated
-        m = ko[(ko["home_team"] == fx["home"]) & (ko["away_team"] == fx["away"])]
-        if m.empty:
-            continue
-        row = m.iloc[-1]
-        if row["home_score"] != row["away_score"]:
-            known[fx["id"]] = fx["home"] if row["home_score"] > row["away_score"] else fx["away"]
-        else:
-            s = shootouts[(shootouts["home_team"] == fx["home"]) & (shootouts["away_team"] == fx["away"])]
-            if not s.empty:
-                known[fx["id"]] = s.iloc[-1]["winner"]
-    known.update(bracket.get("manual_results", {}))
+    pens = shootouts[shootouts["date"] >= "2026-06-28"]
+    changed = True
+    while changed:
+        changed = False
+        for fx in resolved_fixtures(bracket, known):
+            if fx["id"] in known:
+                continue
+            w = _result_winner(ko, pens, fx["home"], fx["away"])
+            if w:
+                known[fx["id"]] = w
+                changed = True
     return known
 
 
@@ -225,20 +241,32 @@ def resolved_fixtures(bracket, known):
     f = bracket["final"]
     if all(k in known for k in f["from"]):
         out.append(dict(f, round="final", home=known[f["from"][0]], away=known[f["from"][1]]))
+    tp = bracket.get("third_place")
+    if tp and all(k in known for k in tp["from"]):
+        losers = []
+        for sf_id in tp["from"]:
+            sf = next(s for s in bracket["sf"] if s["id"] == sf_id)
+            if not all(k in known for k in sf["from"]):
+                losers = None
+                break
+            parts = {known[sf["from"][0]], known[sf["from"][1]]}
+            losers.append((parts - {known[sf_id]}).pop())
+        if losers:
+            out.append(dict(tp, round="third_place", home=losers[0], away=losers[1]))
     return out
 
 
 def run_tournament(sim, bracket, known, n_sims, sampler="antithetic", return_paths=False):
-    """Returns {team: [p_reach_QF, p_reach_SF, p_reach_Final, p_champion]};
+    """Returns {team: [p_reach_QF, p_reach_SF, p_reach_Final, p_champion, p_bronze]};
     with return_paths also ({"teams": [...], "winners": {slot: int16 array}}) per sim."""
     teams = list(dict.fromkeys(
         [t for fx in bracket["r16"] for t in (fx["home"], fx["away"])] + list(known.values())
     ))
     team_to_i = {t: i for i, t in enumerate(teams)}
-    reach = np.zeros((len(teams), 4), dtype=np.int64)
-    draws = _uniforms(sim.rng, n_sims, 15, sampler)
+    reach = np.zeros((len(teams), 5), dtype=np.int64)
+    draws = _uniforms(sim.rng, n_sims, 16, sampler)
     draw_col = 0
-    winners = {}
+    winners, parts = {}, {}
 
     def ids(team):
         return np.full(n_sims, team_to_i[team], dtype=np.int16)
@@ -264,11 +292,18 @@ def run_tournament(sim, bracket, known, n_sims, sampler="antithetic", return_pat
             a, b = (ids(fx["home"]), ids(fx["away"])) if "home" in fx else (
                 winners[fx["from"][0]], winners[fx["from"][1]]
             )
+            parts[fx["id"]] = (a, b)
             winners[fx["id"]] = choose(fx, a, b)
             np.add.at(reach[:, level], winners[fx["id"]], 1)
     f = bracket["final"]
     winners[f["id"]] = choose(f, winners[f["from"][0]], winners[f["from"][1]])
     np.add.at(reach[:, 3], winners[f["id"]], 1)
+    tp = bracket.get("third_place")
+    if tp:
+        losers = [np.where(winners[s] == parts[s][0], parts[s][1], parts[s][0])
+                  for s in tp["from"]]
+        winners[tp["id"]] = choose(tp, losers[0], losers[1])
+        np.add.at(reach[:, 4], winners[tp["id"]], 1)
     probs = {teams[i]: row / n_sims for i, row in enumerate(reach) if row.sum()}
     if return_paths:
         return probs, {"teams": teams, "winners": winners}
@@ -366,7 +401,7 @@ def main():
     probs = run_tournament(sim, bracket, known, args.sims, args.sampler)
     out = pd.DataFrame(
         [(t, *p) for t, p in probs.items()],
-        columns=["team", "reach_QF", "reach_SF", "reach_final", "champion"],
+        columns=["team", "reach_QF", "reach_SF", "reach_final", "champion", "bronze"],
     ).sort_values("champion", ascending=False).reset_index(drop=True)
 
     print(f"\n=== Remaining-bracket Monte Carlo ({args.sims} sims, {args.sampler}) ===")

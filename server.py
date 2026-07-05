@@ -11,7 +11,9 @@ Endpoints:
   GET/POST /api/backtest  read or recompute walk-forward validation
 """
 import argparse
+import gzip
 import json
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -396,7 +398,8 @@ def refresh():
             "known": known,
             "bracket": sorted(
                 ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
-                  "final": round(p[2], 4), "champion": round(p[3], 4)}
+                  "final": round(p[2], 4), "champion": round(p[3], 4),
+                  "bronze": round(p[4], 4)}
                  for t, p in probs.items()), key=lambda r: -r["champion"]),
             "teams": sorted(atk),
             "ratings": sorted(
@@ -417,14 +420,36 @@ def load_state():
     if STATE_FILE.exists():
         s = json.loads(STATE_FILE.read_text())
         STATE["payload"] = s["payload"]
-        _attach_external(STATE["payload"])
         STATE["pens"] = s.get("pens", {})
         p = s["params"]
         STATE["params"] = (p["attack"], p["defence"], p["hfa"], p["rho"])
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength()
+        _attach_external(STATE["payload"])
         return True
     return False
+
+
+API_TOKEN = os.environ.get("WC26_TOKEN")  # set to require Bearer auth on mutating endpoints
+
+
+@app.before_request
+def _guard_mutations():
+    if API_TOKEN and request.method == "POST" \
+            and request.headers.get("Authorization") != f"Bearer {API_TOKEN}":
+        return jsonify({"error": "unauthorized"}), 401
+
+
+@app.after_request
+def _gzip_json(resp):
+    if (resp.content_type or "").startswith("application/json") and not resp.direct_passthrough \
+            and "gzip" in request.headers.get("Accept-Encoding", "") and resp.status_code == 200:
+        body = resp.get_data()
+        if len(body) > 2048:
+            resp.set_data(gzip.compress(body, 6))
+            resp.headers["Content-Encoding"] = "gzip"
+            resp.headers["Content-Length"] = str(len(resp.get_data()))
+    return resp
 
 
 @app.get("/")
@@ -519,15 +544,16 @@ def _clamp(v, lo, hi):
     return min(max(v, lo), hi)
 
 
-def _validate_overrides(bracket, overrides, known):
-    """Any determined, not-yet-played slot is pinnable (R16 now, QF/SF/F as they form)."""
+def _validate_overrides(bracket, overrides, known, counterfactual=False):
+    """Any determined, not-yet-played slot is pinnable (R16 now, QF/SF/F as they form).
+    counterfactual=True additionally allows rewriting played slots ('what if X had won')."""
     slots = {fx["id"]: {fx["home"], fx["away"]} for fx in resolved_fixtures(bracket, known)}
     errors = []
     for slot, winner in overrides.items():
         if slot not in slots:
             errors.append(f"{slot} is not pinnable yet")
-        elif slot in known:
-            errors.append(f"{slot} already decided ({known[slot]})")
+        elif slot in known and not counterfactual:
+            errors.append(f"{slot} already decided ({known[slot]}) - enable counterfactual mode to rewrite")
         elif winner not in slots[slot]:
             errors.append(f"{slot} winner must be one of {sorted(slots[slot])}")
     return errors
@@ -597,7 +623,8 @@ def api_whatif():
     if bad:
         return jsonify({"error": f"unknown teams: {bad}"}), 400
     bracket = json.loads((ROOT / "bracket_2026.json").read_text())
-    errors = _validate_overrides(bracket, overrides, STATE["payload"]["known"])
+    counterfactual = bool(body.get("counterfactual"))
+    errors = _validate_overrides(bracket, overrides, STATE["payload"]["known"], counterfactual)
     if errors:
         return jsonify({"error": "; ".join(errors)}), 400
     known = {**STATE["payload"]["known"], **overrides}
@@ -624,7 +651,8 @@ def api_whatif():
                     "consensus": build_consensus(paths, bracket, known),
                     "bracket": sorted(
         ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
-          "final": round(p[2], 4), "champion": round(p[3], 4)}
+          "final": round(p[2], 4), "champion": round(p[3], 4),
+          "bronze": round(p[4], 4)}
          for t, p in probs.items()), key=lambda r: -r["champion"])})
 
 

@@ -1,6 +1,6 @@
 # Evidence Log
 
-Last updated: 2026-07-04
+Last updated: 2026-07-05
 
 ## Bias Diagnostics
 
@@ -227,6 +227,39 @@ the walk-forward sweep showed overfit:
 Decision: keep the form prior as an inspectable/tunable engine and show it in
 `/api/case`, but leave the default at `0.00` until more settled forward data
 proves that it improves forecasts without widening the in-sample/OOS gap.
+
+## Full live FIFA ranking sync (2026-07-05)
+
+Command:
+
+```powershell
+.venv\Scripts\python.exe fifa_rankings.py
+.venv\Scripts\python.exe external_data.py
+.venv\Scripts\python.exe backtest.py
+```
+
+Result:
+
+- FIFA live endpoint source: `https://www.fifa.com/en/world-rankings`
+- Synced rows: 211 men's teams
+- Live top five: France, Argentina, Spain, England, Brazil
+- Cape Verde alias: FIFA `Cabo Verde` -> model `Cape Verde`; live rank `64`
+- External mart rows: `project_team_enrichment=216`, `fifa_only_team_strength=92`
+- Name aliases now bridge common model/data mismatches: USA, Cabo Verde,
+  IR Iran, Korea Republic, Korea, South, Korea, North, DPR Korea, China PR,
+  Czechia, Ireland, Türkiye.
+
+Backtest after full-rank integration (`refit_days=45`, `half_life=1100`,
+`goal_scale=1.10`, `external_weight=0.12`, `form_weight=0.00`):
+
+- RPS `0.1525`
+- Brier `0.4855`
+- Log-loss `0.8345`
+- In-sample RPS `0.1453`, OOS gap `+0.0072`
+
+Decision: keep `external_weight=0.12`. Full live ranks improve OOS metrics
+without increasing the overfit gap, while rank-only teams still keep missing
+player/market/chemistry fields null instead of imputing fake squads.
 
 ## Forward calibration loop
 
