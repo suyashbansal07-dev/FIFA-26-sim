@@ -345,3 +345,36 @@ git diff --check
 Result: all self-checks passed, including a new guard that played slots are
 100% only as facts while unplayed deterministic support comes from normal
 match-level advance probabilities.
+
+## Deeper external prior integration (2026-07-05)
+
+User concern: enriched player/market/chemistry data must affect the model, not
+only the UI. The previous prior used top-23 market value, FIFA rank, caps,
+goals, and chemistry. I tested deeper composites against the same walk-forward
+blocks, fitting each block once and rescoring candidate strength maps.
+
+Prototype result (`392` OOS matches, `half_life=1100`, `goal_scale=1.10`,
+`form_weight=0.00`):
+
+| Composite | Weight | RPS | Brier | Log-loss |
+| --- | ---: | ---: | ---: | ---: |
+| rank_quality | 0.15 | 0.1512 | 0.4828 | 0.8316 |
+| deep | 0.15 | 0.1517 | 0.4840 | 0.8329 |
+| current | 0.15 | 0.1520 | 0.4845 | 0.8331 |
+| current default before change | 0.12 | 0.1526 | 0.4857 | 0.8348 |
+
+Accepted change: `external_signals.py` now uses top-11 quality, top-23 depth
+beyond the top 11, FIFA rank, caps, goals, chemistry, position balance, and
+same-club share. Missing fields remain neutral, preserving rank-only fallback
+teams without fake squad imputation.
+
+Full backtest after implementation:
+
+- RPS `0.1512`
+- Brier `0.4828`
+- Log-loss `0.8316`
+- In-sample RPS `0.1446`, OOS gap `+0.0066`
+
+Decision: set default `external_weight=0.15`. This is the tested cap, but the
+rate adjustment itself remains capped by `MAX_RATE_ADJ=0.25`, and the form
+prior stays disabled because its previous sweep widened the overfit gap.

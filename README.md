@@ -88,7 +88,7 @@ flowchart LR
 | Ratings | attack αᵢ, defence βᵢ per team, global γ (home), ρ | spec §2.1–2.2 |
 | Time decay | exponential, half-life 1100 d (sweep-validated) | momentum without starving the fit |
 | Goal scale | 1.10 post-fit rate calibration | reduces low-score overconservatism out-of-sample |
-| External prior | capped player/market/rank/chemistry rate adjustment, weight 0.12 | richer signal without letting market data dominate |
+| External prior | capped player quality/depth/rank/chemistry rate adjustment, weight 0.15 | richer signal without letting market data dominate |
 | Form prior | opponent-adjusted recent-form/xG signal, default weight 0.00 | wired and tunable, but disabled by default after OOS sweep |
 | Venue | per-match neutral flag in fit; γ only for hosts at own venue | tournament realism |
 | Knockout ties | 30-min Poisson extra time, then Beta(5,5)-shrunk historical shootout rates | principled, not a coin flip |
@@ -99,12 +99,12 @@ flowchart LR
 
 | Metric | Model | Uniform | Train-freq |
 |---|---:|---:|---:|
-| RPS current calibrated (392 OOS matches, Jan-Jul 2026) | **0.1525** | 0.2361 | 0.2211 |
-| Brier current calibrated | 0.4855 | - | - |
-| Log-loss current calibrated | 0.8345 | - | - |
-| Current calibrated gap | 0.1460 in-sample -> +0.0077 OOS | - | - |
+| RPS current calibrated (392 OOS matches, Jan-Jul 2026) | **0.1512** | 0.2361 | 0.2211 |
+| Brier current calibrated | 0.4828 | - | - |
+| Log-loss current calibrated | 0.8316 | - | - |
+| Current calibrated gap | 0.1446 in-sample -> +0.0066 OOS | - | - |
 
-In-sample RPS 0.1453 -> out-of-sample gap +0.0072 (mild, monitored). Reliability
+In-sample RPS 0.1446 -> out-of-sample gap +0.0066 (mild, monitored). Reliability
 bins and the forward ledger (first settled knockout forecast: Morocco favorite
 at 45.1%, hit) live in the UI's *Model validation* section and
 [docs/EVIDENCE_LOG.md](docs/EVIDENCE_LOG.md).
@@ -136,7 +136,7 @@ at 45.1%, hit) live in the UI's *Model validation* section and
 | `fifa_rankings.py` | live FIFA ranking sync from `fifa.com/en/world-rankings` |
 | `match_features.py` | ESPN match stats / xG ingestion (diagnostics only, forward-safe) |
 | `external_data.py` | Transfermarkt player, national-team, market, chemistry, and FIFA-rank mart (ignored output) |
-| `external_signals.py` | capped model prior from market, FIFA rank, caps/goals, and chemistry |
+| `external_signals.py` | capped model prior from top-11 quality, squad depth, FIFA rank, caps/goals, and chemistry |
 | `backtest.py` | walk-forward RPS/Brier/log-loss, reliability bins, `--sweep` |
 | `forward_loop.py` | append-only forecast ledger, scored pre-match-only |
 | `diagnostics.py` | evidence-first bias reports |

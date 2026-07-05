@@ -70,6 +70,22 @@ def test_external_strength_uses_rank_only_fallback_without_fake_player_data():
     assert strength["B"] < strength["Cape Verde"] < strength["A"]
 
 
+def test_external_strength_uses_quality_depth_and_chemistry():
+    from external_signals import build_external_strength
+    rows = pd.DataFrame([
+        {"team": "Balanced", "top11_market_value": 500_000_000,
+         "top23_market_value": 900_000_000, "fifa_ranking": 10,
+         "squad_caps": 800, "squad_goals": 120, "chemistry_score": 0.85,
+         "position_balance": 1.0, "same_club_share": 0.2},
+        {"team": "Thin", "top11_market_value": 500_000_000,
+         "top23_market_value": 550_000_000, "fifa_ranking": 10,
+         "squad_caps": 800, "squad_goals": 120, "chemistry_score": 0.55,
+         "position_balance": 0.6, "same_club_share": 0.05},
+    ])
+    strength = build_external_strength(rows)
+    assert strength["Balanced"] > strength["Thin"]
+
+
 def test_fifa_live_ranking_rows_are_canonicalized():
     from fifa_rankings import rows_from_payload
     payload = {"Results": [

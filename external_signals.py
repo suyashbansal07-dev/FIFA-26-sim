@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).parent
-DEFAULT_EXTERNAL_WEIGHT = 0.12
+DEFAULT_EXTERNAL_WEIGHT = 0.15
 MAX_RATE_ADJ = 0.25
 
 
@@ -23,17 +23,28 @@ def _z(values):
     return ((s - observed.mean()) / std).fillna(0.0)
 
 
+def _num_col(df, col):
+    if col not in df:
+        return pd.Series(np.nan, index=df.index)
+    return pd.to_numeric(df[col], errors="coerce")
+
+
 def build_external_strength(df: pd.DataFrame):
     df = df.copy()
-    for col in ("top23_market_value", "fifa_ranking", "squad_caps", "squad_goals", "chemistry_score"):
-        if col in df:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    market = _z(np.log1p(df["top23_market_value"].clip(lower=0)))
-    rank = _z(-np.log(df["fifa_ranking"].clip(lower=1)))
-    caps = _z(np.log1p(df["squad_caps"].clip(lower=0)))
-    goals = _z(np.log1p(df["squad_goals"].clip(lower=0)))
-    chemistry = _z(df["chemistry_score"]) if "chemistry_score" in df else 0.0
-    raw = 0.52 * market + 0.25 * rank + 0.10 * caps + 0.05 * goals + 0.08 * chemistry
+    top23 = _num_col(df, "top23_market_value")
+    top11 = _num_col(df, "top11_market_value")
+    quality_value = top11.where(top11.notna(), top23)
+    depth_value = (top23 - top11).where(top23.notna() & top11.notna())
+    quality = _z(np.log1p(quality_value.clip(lower=0)))
+    depth = _z(np.log1p(depth_value.clip(lower=0)))
+    rank = _z(-np.log(_num_col(df, "fifa_ranking").clip(lower=1)))
+    caps = _z(np.log1p(_num_col(df, "squad_caps").clip(lower=0)))
+    goals = _z(np.log1p(_num_col(df, "squad_goals").clip(lower=0)))
+    chemistry = _z(_num_col(df, "chemistry_score"))
+    position = _z(_num_col(df, "position_balance"))
+    same_club = _z(_num_col(df, "same_club_share"))
+    raw = (0.31 * quality + 0.14 * depth + 0.35 * rank + 0.06 * caps
+           + 0.03 * goals + 0.06 * chemistry + 0.03 * position + 0.02 * same_club)
     strength = raw.clip(-2.5, 2.5)
     return {team: round(float(v), 4) for team, v in zip(df["team"], strength) if pd.notna(team)}
 
