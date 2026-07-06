@@ -118,6 +118,26 @@ def test_external_strength_uses_current_wc_player_impact_when_enabled():
     assert offline["Hot"] == offline["Cold"]
 
 
+def test_external_strength_uses_current_wc_usage_availability_when_enabled():
+    from external_signals import build_external_strength
+    common = {"top11_market_value": 300_000_000, "top23_market_value": 500_000_000,
+              "fifa_ranking": 15, "squad_caps": 500, "squad_goals": 80,
+              "chemistry_score": 0.7, "position_balance": 0.8, "same_club_share": 0.1,
+              "top1_market_value": 80_000_000, "top3_market_value": 200_000_000,
+              "top_attacker_market_value": 80_000_000,
+              "fiwc_impact_score": 100, "fiwc_top_impact_score": 50}
+    rows = pd.DataFrame([
+        {"team": "Used", **common, "fiwc_top11_usage_share": 0.92,
+         "fiwc_top_market_usage_share": 0.95, "fiwc_top_market_impact_score": 200},
+        {"team": "Benched", **common, "fiwc_top11_usage_share": 0.45,
+         "fiwc_top_market_usage_share": 0.25, "fiwc_top_market_impact_score": 2},
+    ])
+    live = build_external_strength(rows, use_fiwc_impact=True)
+    offline = build_external_strength(rows, use_fiwc_impact=False)
+    assert live["Used"] > live["Benched"]
+    assert offline["Used"] == offline["Benched"]
+
+
 def test_fifa_live_ranking_rows_are_canonicalized():
     from fifa_rankings import rows_from_payload
     payload = {"Results": [
@@ -475,7 +495,14 @@ def test_external_payload_enriches_ratings():
                            "fiwc_top_impact_score": 155.0,
                            "fiwc_top_impact_goals": 3,
                            "fiwc_top_impact_assists": 1,
-                           "fiwc_top_impact_minutes": 240}]).to_csv(Path(d) / "project_team_enrichment.csv", index=False)
+                           "fiwc_top_impact_minutes": 240,
+                           "fiwc_top_market_player": "Alphonso Davies",
+                           "fiwc_top_market_minutes": 180,
+                           "fiwc_top_market_goals": 0,
+                           "fiwc_top_market_assists": 2,
+                           "fiwc_top_market_impact_score": 45.0,
+                           "fiwc_top_market_usage_share": 0.67,
+                           "fiwc_top11_usage_share": 0.72}]).to_csv(Path(d) / "project_team_enrichment.csv", index=False)
             (Path(d) / "external_meta.json").write_text(json.dumps({"source": "test", "generated": "now"}))
             out = server._attach_external(payload)
             assert out["external"]["present"] and out["meta"]["external_data"]["rows"] == 1
@@ -483,8 +510,10 @@ def test_external_payload_enriches_ratings():
             assert out["ratings"][0]["top23_market_value"] == 199500000
             assert out["ratings"][0]["top_player"] == "Alphonso Davies"
             assert out["ratings"][0]["fiwc_impact_player"] == "Jonathan David"
+            assert out["ratings"][0]["fiwc_top_market_usage_share"] == 0.67
             assert out["external"]["teams"][0]["top1_market_value"] == 50000000
             assert out["external"]["teams"][0]["fiwc_top_impact_goals"] == 3
+            assert out["external"]["teams"][0]["fiwc_top11_usage_share"] == 0.72
             assert out["external"]["teams"][0]["fiwc_minutes"] == 2700
             assert out["external"]["teams"][0]["fiwc_assists"] == 4
         finally:

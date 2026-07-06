@@ -99,6 +99,10 @@ def _load_external_payload():
             "fiwc_impact_score", "fiwc_impact_player", "fiwc_impact_player_position",
             "fiwc_top_impact_score", "fiwc_top_impact_goals",
             "fiwc_top_impact_assists", "fiwc_top_impact_minutes",
+            "fiwc_top_market_player", "fiwc_top_market_minutes",
+            "fiwc_top_market_goals", "fiwc_top_market_assists",
+            "fiwc_top_market_impact_score", "fiwc_top_market_usage_share",
+            "fiwc_top11_usage_share",
             "fiwc_starts", "fiwc_captain_starts"]
     for col in keep:
         if col not in df:
@@ -125,6 +129,9 @@ def _attach_external(payload):
                 "top_attacker_market_value": e.get("top_attacker_market_value"),
                 "fiwc_impact_player": e.get("fiwc_impact_player"),
                 "fiwc_impact_score": e.get("fiwc_impact_score"),
+                "fiwc_top_market_player": e.get("fiwc_top_market_player"),
+                "fiwc_top_market_usage_share": e.get("fiwc_top_market_usage_share"),
+                "fiwc_top11_usage_share": e.get("fiwc_top11_usage_share"),
                 "squad_caps": e.get("squad_caps"),
                 "squad_goals": e.get("squad_goals"),
             })
