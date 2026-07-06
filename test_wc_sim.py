@@ -101,6 +101,23 @@ def test_external_strength_uses_star_x_factor_without_team_exceptions():
     assert strength["OneStar"] > strength["Flat"]
 
 
+def test_external_strength_uses_current_wc_player_impact_when_enabled():
+    from external_signals import build_external_strength
+    common = {"top11_market_value": 300_000_000, "top23_market_value": 500_000_000,
+              "fifa_ranking": 15, "squad_caps": 500, "squad_goals": 80,
+              "chemistry_score": 0.7, "position_balance": 0.8, "same_club_share": 0.1,
+              "top1_market_value": 80_000_000, "top3_market_value": 200_000_000,
+              "top_attacker_market_value": 80_000_000}
+    rows = pd.DataFrame([
+        {"team": "Hot", **common, "fiwc_impact_score": 500, "fiwc_top_impact_score": 250},
+        {"team": "Cold", **common, "fiwc_impact_score": 0, "fiwc_top_impact_score": 0},
+    ])
+    live = build_external_strength(rows, use_fiwc_impact=True)
+    offline = build_external_strength(rows, use_fiwc_impact=False)
+    assert live["Hot"] > live["Cold"]
+    assert offline["Hot"] == offline["Cold"]
+
+
 def test_fifa_live_ranking_rows_are_canonicalized():
     from fifa_rankings import rows_from_payload
     payload = {"Results": [
@@ -113,12 +130,16 @@ def test_fifa_live_ranking_rows_are_canonicalized():
         {"TeamName": [{"Locale": "en-GB", "Description": "USA"}], "Rank": 17,
          "IdCountry": "USA", "TotalPoints": 1647.0, "PrevRank": 17,
          "RankingMovement": 0, "ConfederationName": "CONCACAF"},
+        {"TeamName": [{"Locale": "en-GB", "Description": "Côte d’Ivoire"}], "Rank": 31,
+         "IdCountry": "CIV", "TotalPoints": 1510.0, "PrevRank": 41,
+         "RankingMovement": 10, "ConfederationName": "CAF"},
     ]}
     rows = rows_from_payload(payload, source_date="2026-07-05")
     names = {r["team"]: r for r in rows}
     assert names["France"]["fifa_ranking"] == 1
     assert names["Cape Verde"]["country_code"] == "CPV"
     assert names["United States"]["country_code"] == "USA"
+    assert names["Ivory Coast"]["country_code"] == "CIV"
 
 
 def test_form_strength_rewards_opponent_adjusted_recent_run():
@@ -272,6 +293,34 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         assert settled["calibration_policy"]["action"] == "hold"
 
 
+def test_forward_loop_records_context_buckets():
+    from forward_loop import record_payload_forecasts, settle_forward_forecasts
+    payload = {"meta": {"generated": "2026-07-04T00:00:00+00:00", "half_life_days": 550,
+                        "friendly_weight": 1, "goal_scale": 1.1, "external_weight": 0.15,
+                        "form_weight": 0.0, "sampler": "antithetic", "sims": 1000000,
+                        "hfa": 0.2, "rho": -0.08},
+               "fixtures": [{"id": "R16-X", "date": "2026-07-05", "home": "A",
+                             "away": "B", "venue": "Neutral", "played": False,
+                             "p_home": 0.6, "p_draw": 0.2, "p_away": 0.2, "over25": 0.5}]}
+    matches = pd.DataFrame([
+        {"date": pd.Timestamp("2026-06-25"), "home_team": "B", "away_team": "Y",
+         "home_score": 0, "away_score": 2},
+        {"date": pd.Timestamp("2026-07-01"), "home_team": "A", "away_team": "X",
+         "home_score": 3, "away_score": 0},
+        {"date": pd.Timestamp("2026-07-05"), "home_team": "A", "away_team": "B",
+         "home_score": 2, "away_score": 0},
+    ])
+    with TemporaryDirectory() as d:
+        ledger = Path(d) / "ledger.jsonl"
+        report = Path(d) / "calibration.json"
+        record_payload_forecasts(payload, ledger, now=pd.Timestamp("2026-07-04", tz="UTC").to_pydatetime())
+        out = settle_forward_forecasts(matches, ledger, report)
+        row = out["settled_rows"][0]
+        assert row["form_bucket"] == "home_form_edge"
+        assert row["rest_bucket"] == "away_rest_edge"
+        assert out["context_buckets"]["form"][0]["bucket"] == "home_form_edge"
+
+
 def test_espn_topup_fills_pending_fixture_instead_of_duplicating():
     from fetch_data import espn_topup
     matches = pd.DataFrame([
@@ -420,14 +469,22 @@ def test_external_payload_enriches_ratings():
                            "squad_goals": 158, "fiwc_player_appearances": 44,
                            "fiwc_minutes": 2700, "fiwc_player_goals": 7,
                            "fiwc_assists": 4, "fiwc_yellow_cards": 2,
-                           "fiwc_red_cards": 0}]).to_csv(Path(d) / "project_team_enrichment.csv", index=False)
+                           "fiwc_red_cards": 0, "fiwc_impact_score": 333.0,
+                           "fiwc_impact_player": "Jonathan David",
+                           "fiwc_impact_player_position": "Attack",
+                           "fiwc_top_impact_score": 155.0,
+                           "fiwc_top_impact_goals": 3,
+                           "fiwc_top_impact_assists": 1,
+                           "fiwc_top_impact_minutes": 240}]).to_csv(Path(d) / "project_team_enrichment.csv", index=False)
             (Path(d) / "external_meta.json").write_text(json.dumps({"source": "test", "generated": "now"}))
             out = server._attach_external(payload)
             assert out["external"]["present"] and out["meta"]["external_data"]["rows"] == 1
             assert out["ratings"][0]["fifa_ranking"] == 30
             assert out["ratings"][0]["top23_market_value"] == 199500000
             assert out["ratings"][0]["top_player"] == "Alphonso Davies"
+            assert out["ratings"][0]["fiwc_impact_player"] == "Jonathan David"
             assert out["external"]["teams"][0]["top1_market_value"] == 50000000
+            assert out["external"]["teams"][0]["fiwc_top_impact_goals"] == 3
             assert out["external"]["teams"][0]["fiwc_minutes"] == 2700
             assert out["external"]["teams"][0]["fiwc_assists"] == 4
         finally:

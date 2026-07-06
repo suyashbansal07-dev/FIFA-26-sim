@@ -212,6 +212,19 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
             f"select * from read_csv_auto('{_table_path('game_lineups', out_dir)}', "
             "strict_mode=false, null_padding=true, all_varchar=true)"
         )
+        con.sql(f"""
+            create or replace temp view fiwc_team_ids as
+            select distinct team_id, coalesce(a.team, team_name) as team
+            from (
+                select home_club_id as team_id, home_club_name as team_name
+                from games where competition_id = 'FIWC' and date >= '{start}'
+                union all
+                select away_club_id as team_id, away_club_name as team_name
+                from games where competition_id = 'FIWC' and date >= '{start}'
+            ) t
+            left join team_aliases a on a.source = t.team_name
+            where team_id is not null and team_name is not null
+        """)
         con.sql("""
             create or replace temp view game_lineups as
             select try_cast(date as date) as date, try_cast(game_id as bigint) as game_id,
@@ -222,7 +235,7 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         """)
         con.sql(f"""
             create or replace temp view fiwc_2026_appearances as
-            select coalesce(nta.team, nt.name) as team, count(*) as player_appearances,
+            select coalesce(fti.team, nta.team, nt.name) as team, count(*) as player_appearances,
                    sum(a.minutes_played) as minutes_played,
                    sum(a.goals) as goals, sum(a.assists) as assists,
                    sum(a.yellow_cards) as yellow_cards, sum(a.red_cards) as red_cards
@@ -230,26 +243,73 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
             join games g on g.game_id = a.game_id
             left join national_teams nt on nt.national_team_id = a.player_club_id
             left join team_aliases nta on nta.source = nt.name
+            left join fiwc_team_ids fti on fti.team_id = a.player_club_id
             where g.competition_id = 'FIWC' and g.date >= '{start}'
-            group by coalesce(nta.team, nt.name)
+            group by coalesce(fti.team, nta.team, nt.name)
+        """)
+        con.sql(f"""
+            create or replace temp view fiwc_2026_player_usage as
+            select coalesce(fti.team, nta.team, nt.name) as team, p.player_id, p.name as player,
+                   p.position, max(p.market_value_in_eur) as market_value_in_eur,
+                   sum(a.minutes_played) as minutes_played,
+                   sum(a.goals) as goals, sum(a.assists) as assists,
+                   sum(a.yellow_cards) as yellow_cards, sum(a.red_cards) as red_cards,
+                   sum(a.goals) * 120.0 + sum(a.assists) * 90.0 + sum(a.minutes_played) / 30.0
+                   + ln(1 + coalesce(max(p.market_value_in_eur), 0)) / 4.0 as impact_score
+            from appearances a
+            join games g on g.game_id = a.game_id
+            left join players p on p.player_id = a.player_id
+            left join national_teams nt on nt.national_team_id = a.player_club_id
+            left join team_aliases nta on nta.source = nt.name
+            left join fiwc_team_ids fti on fti.team_id = a.player_club_id
+            where g.competition_id = 'FIWC' and g.date >= '{start}'
+            group by coalesce(fti.team, nta.team, nt.name), p.player_id, p.name, p.position
+        """)
+        con.sql("""
+            create or replace temp view fiwc_2026_team_impact as
+            select team, sum(impact_score) as fiwc_impact_score,
+                   arg_max(player, impact_score) as fiwc_impact_player,
+                   arg_max(position, impact_score) as fiwc_impact_player_position,
+                   max(impact_score) as fiwc_top_impact_score,
+                   arg_max(goals, impact_score) as fiwc_top_impact_goals,
+                   arg_max(assists, impact_score) as fiwc_top_impact_assists,
+                   arg_max(minutes_played, impact_score) as fiwc_top_impact_minutes
+            from fiwc_2026_player_usage
+            group by team
         """)
         con.sql(f"""
             create or replace temp view fiwc_2026_starts as
-            select coalesce(nta.team, nt.name) as team,
+            select coalesce(fti.team, nta.team, nt.name) as team,
                    sum(case when lower(type) = 'starting_lineup' then 1 else 0 end) as starts,
                    sum(case when team_captain = 1 then 1 else 0 end) as captain_starts
             from game_lineups gl
             join games g on g.game_id = gl.game_id
             left join national_teams nt on nt.national_team_id = gl.club_id
             left join team_aliases nta on nta.source = nt.name
+            left join fiwc_team_ids fti on fti.team_id = gl.club_id
             where g.competition_id = 'FIWC' and g.date >= '{start}'
-            group by coalesce(nta.team, nt.name)
+            group by coalesce(fti.team, nta.team, nt.name)
         """)
     else:
         con.sql("""
             create or replace temp view fiwc_2026_appearances as
             select team, 0 as player_appearances, 0 as minutes_played, 0 as goals, 0 as assists,
                    0 as yellow_cards, 0 as red_cards
+            from team_strength where false
+        """)
+        con.sql("""
+            create or replace temp view fiwc_2026_player_usage as
+            select team, null::bigint as player_id, null::varchar as player, null::varchar as position,
+                   null::double as market_value_in_eur, 0 as minutes_played, 0 as goals, 0 as assists,
+                   0 as yellow_cards, 0 as red_cards, 0.0 as impact_score
+            from team_strength where false
+        """)
+        con.sql("""
+            create or replace temp view fiwc_2026_team_impact as
+            select team, 0.0 as fiwc_impact_score, null::varchar as fiwc_impact_player,
+                   null::varchar as fiwc_impact_player_position, 0.0 as fiwc_top_impact_score,
+                   0 as fiwc_top_impact_goals, 0 as fiwc_top_impact_assists,
+                   0 as fiwc_top_impact_minutes
             from team_strength where false
         """)
         con.sql("""
@@ -265,18 +325,28 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
                coalesce(a.assists, 0) as fiwc_assists,
                coalesce(a.yellow_cards, 0) as fiwc_yellow_cards,
                coalesce(a.red_cards, 0) as fiwc_red_cards,
+               coalesce(i.fiwc_impact_score, 0) as fiwc_impact_score,
+               i.fiwc_impact_player,
+               i.fiwc_impact_player_position,
+               coalesce(i.fiwc_top_impact_score, 0) as fiwc_top_impact_score,
+               coalesce(i.fiwc_top_impact_goals, 0) as fiwc_top_impact_goals,
+               coalesce(i.fiwc_top_impact_assists, 0) as fiwc_top_impact_assists,
+               coalesce(i.fiwc_top_impact_minutes, 0) as fiwc_top_impact_minutes,
                coalesce(s.starts, 0) as fiwc_starts,
                coalesce(s.captain_starts, 0) as fiwc_captain_starts
         from team_strength ts
         left join fiwc_2026_appearances a using(team)
+        left join fiwc_2026_team_impact i using(team)
         left join fiwc_2026_starts s using(team)
     """)
     for view in ("player_pool", "team_chemistry", "team_strength", "fiwc_2026_appearances",
+                 "fiwc_2026_player_usage", "fiwc_2026_team_impact",
                  "fiwc_2026_starts", "project_team_enrichment"):
         con.sql(f"copy (select * from {view}) to '{_sql_path(out_dir / (view + '.csv'))}' (header, delimiter ',')")
     sample = con.sql("""
         select team, fifa_ranking, current_nt_players, top11_market_value, top23_market_value,
                top_player, top1_market_value, top_attacker_market_value,
+               fiwc_impact_player, fiwc_top_impact_score,
                chemistry_score, fiwc_minutes, fiwc_player_goals
         from project_team_enrichment
         order by top23_market_value desc nulls last
@@ -299,6 +369,8 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
             "team_chemistry": int(con.sql("select count(*) from team_chemistry").fetchone()[0]),
             "project_team_enrichment": int(con.sql("select count(*) from project_team_enrichment").fetchone()[0]),
             "fiwc_2026_appearances": int(con.sql("select count(*) from fiwc_2026_appearances").fetchone()[0]),
+            "fiwc_2026_player_usage": int(con.sql("select count(*) from fiwc_2026_player_usage").fetchone()[0]),
+            "fiwc_2026_team_impact": int(con.sql("select count(*) from fiwc_2026_team_impact").fetchone()[0]),
             "fiwc_2026_starts": int(con.sql("select count(*) from fiwc_2026_starts").fetchone()[0]),
         },
     }

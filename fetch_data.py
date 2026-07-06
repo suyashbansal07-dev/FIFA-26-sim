@@ -17,7 +17,9 @@ ESPN = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboa
 DATA = Path(__file__).parent / "data"
 COMPLETE = {"STATUS_FULL_TIME", "STATUS_FINAL_AET", "STATUS_FINAL_PEN"}
 # ESPN display names -> martj42 names (only teams that can still appear at this WC need care)
-TEAM_ALIASES = {"Congo DR": "DR Congo", "Bosnia-Herzegovina": "Bosnia and Herzegovina", "USA": "United States"}
+TEAM_ALIASES = {"Congo DR": "DR Congo", "Bosnia-Herzegovina": "Bosnia and Herzegovina",
+                "Cote d'Ivoire": "Ivory Coast", "Côte d'Ivoire": "Ivory Coast",
+                "Côte d’Ivoire": "Ivory Coast", "USA": "United States"}
 COUNTRY_ALIASES = {"USA": "United States"}
 
 

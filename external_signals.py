@@ -29,7 +29,7 @@ def _num_col(df, col):
     return pd.to_numeric(df[col], errors="coerce")
 
 
-def build_external_strength(df: pd.DataFrame):
+def build_external_strength(df: pd.DataFrame, use_fiwc_impact=True):
     df = df.copy()
     top23 = _num_col(df, "top23_market_value")
     top11 = _num_col(df, "top11_market_value")
@@ -45,20 +45,30 @@ def build_external_strength(df: pd.DataFrame):
             + 0.25 * _z(np.log1p(top3.clip(lower=0)))
             + 0.15 * _z(star_share))
     attacker = _z(np.log1p(top_attacker.clip(lower=0)))
+    fiwc_impact = (
+        0.70 * _z(np.log1p(_num_col(df, "fiwc_impact_score").clip(lower=0)))
+        + 0.30 * _z(np.log1p(_num_col(df, "fiwc_top_impact_score").clip(lower=0)))
+    ) if use_fiwc_impact else pd.Series(np.zeros(len(df)), index=df.index)
     rank = _z(-np.log(_num_col(df, "fifa_ranking").clip(lower=1)))
     caps = _z(np.log1p(_num_col(df, "squad_caps").clip(lower=0)))
     goals = _z(np.log1p(_num_col(df, "squad_goals").clip(lower=0)))
     chemistry = _z(_num_col(df, "chemistry_score"))
     position = _z(_num_col(df, "position_balance"))
     same_club = _z(_num_col(df, "same_club_share"))
-    raw = (0.29 * quality + 0.13 * depth + 0.35 * rank + 0.055 * caps
-           + 0.03 * goals + 0.055 * chemistry + 0.03 * position + 0.02 * same_club
-           + 0.025 * star + 0.015 * attacker)
+    if use_fiwc_impact:
+        raw = (0.27 * quality + 0.12 * depth + 0.34 * rank + 0.05 * caps
+               + 0.03 * goals + 0.05 * chemistry + 0.03 * position + 0.02 * same_club
+               + 0.025 * star + 0.015 * attacker + 0.05 * fiwc_impact)
+    else:
+        raw = (0.29 * quality + 0.13 * depth + 0.35 * rank + 0.055 * caps
+               + 0.03 * goals + 0.055 * chemistry + 0.03 * position + 0.02 * same_club
+               + 0.025 * star + 0.015 * attacker)
     strength = raw.clip(-2.5, 2.5)
     return {team: round(float(v), 4) for team, v in zip(df["team"], strength) if pd.notna(team)}
 
 
-def load_external_strength(path=ROOT / "output" / "external" / "project_team_enrichment.csv"):
+def load_external_strength(path=ROOT / "output" / "external" / "project_team_enrichment.csv",
+                           use_fiwc_impact=True):
     path = Path(path)
     if not path.exists():
         return {}, {"present": False, "note": "run external_data.py"}
@@ -67,8 +77,9 @@ def load_external_strength(path=ROOT / "output" / "external" / "project_team_enr
     missing = needed - set(df.columns)
     if missing:
         return {}, {"present": False, "note": f"external mart missing columns: {sorted(missing)}"}
-    strength = build_external_strength(df)
-    return strength, {"present": True, "rows": len(strength), "path": str(path)}
+    strength = build_external_strength(df, use_fiwc_impact=use_fiwc_impact)
+    return strength, {"present": True, "rows": len(strength), "path": str(path),
+                      "use_fiwc_impact": use_fiwc_impact}
 
 
 def external_rate_adjustment(team_a, team_b, strength, weight):

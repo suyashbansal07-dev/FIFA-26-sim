@@ -19,12 +19,26 @@ import numpy as np
 import pandas as pd
 
 from backtest import rps
+from feature_context import add_forward_safe_context, form_bucket, rest_bucket
 from match_features import FEATURE_COLS, feature_coverage, find_match_feature, load_match_features
 from wc_sim import ROOT
 
 OUT = Path(__file__).parent / "output"
 LEDGER = OUT / "forward_forecasts.jsonl"
 CALIBRATION = OUT / "forward_calibration.json"
+CONTEXT_COLS = ("home_days_rest", "away_days_rest", "home_ppg_recent", "away_ppg_recent",
+                "home_gf_recent", "away_gf_recent", "home_ga_recent", "away_ga_recent",
+                "home_matches_seen", "away_matches_seen")
+
+
+def _clean(v):
+    if pd.isna(v):
+        return None
+    if isinstance(v, np.integer):
+        return int(v)
+    if isinstance(v, np.floating):
+        return float(v)
+    return v
 
 
 def _read_jsonl(path):
@@ -119,6 +133,17 @@ def _bins(settled):
     return out
 
 
+def _bucket_metrics(settled, key):
+    out = []
+    for name in sorted({r.get(key) for r in settled if r.get(key)}):
+        rows = [r for r in settled if r.get(key) == name]
+        out.append({"bucket": name, "n": len(rows),
+                    "rps": round(float(np.mean([r["rps"] for r in rows])), 4),
+                    "favorite_pred": round(float(np.mean([r["favorite_pred"] for r in rows])), 3),
+                    "favorite_observed": round(float(np.mean([r["favorite_hit"] for r in rows])), 3)})
+    return out
+
+
 def calibration_policy(settled, min_settled=12):
     if len(settled) < min_settled:
         return {
@@ -159,6 +184,7 @@ def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
     revisions = len(valid) - len({r["fixture_id"] for r in valid})
     rows = list({r["fixture_id"]: r for r in valid}.values())
     features = load_match_features()
+    context = add_forward_safe_context(matches)
     settled, pending = [], 0
     for forecast in rows:
         result = _find_result(matches, forecast)
@@ -188,6 +214,12 @@ def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
                     settled_row[f"{side}_{col}"] = feat.get(f"{side}_{col}")
         else:
             settled_row["has_match_features"] = False
+        ctx = _find_result(context, forecast)
+        if ctx is not None:
+            for col in CONTEXT_COLS:
+                settled_row[col] = _clean(ctx.get(col))
+            settled_row["rest_bucket"] = rest_bucket(ctx.get("home_days_rest"), ctx.get("away_days_rest"))
+            settled_row["form_bucket"] = form_bucket(ctx.get("home_ppg_recent"), ctx.get("away_ppg_recent"))
         settled.append(settled_row)
     report = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -206,6 +238,10 @@ def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
         "reliability": _bins(settled),
         "calibration_policy": calibration_policy(settled),
         "match_features": feature_coverage(settled),
+        "context_buckets": {
+            "rest": _bucket_metrics(settled, "rest_bucket"),
+            "form": _bucket_metrics(settled, "form_bucket"),
+        },
         "settled_rows": settled,
     }
     out_path.parent.mkdir(exist_ok=True)

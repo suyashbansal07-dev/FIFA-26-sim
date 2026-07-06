@@ -19,6 +19,9 @@ API = "https://api.fifa.com/api/v3/fifarankings/rankings/live?gender=1&count=300
 TEAM_ALIASES = {
     "Cabo Verde": "Cape Verde",
     "China PR": "China",
+    "Cote d'Ivoire": "Ivory Coast",
+    "Côte d'Ivoire": "Ivory Coast",
+    "Côte d’Ivoire": "Ivory Coast",
     "Czechia": "Czech Republic",
     "DPR Korea": "North Korea",
     "IR Iran": "Iran",

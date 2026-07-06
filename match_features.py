@@ -20,7 +20,9 @@ DATA = ROOT / "data"
 ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates={span}"
 ESPN_SUMMARY = "https://site.web.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event={event_id}"
 COMPLETE = {"STATUS_FULL_TIME", "STATUS_FINAL_AET", "STATUS_FINAL_PEN"}
-TEAM_ALIASES = {"Congo DR": "DR Congo", "Bosnia-Herzegovina": "Bosnia and Herzegovina", "USA": "United States"}
+TEAM_ALIASES = {"Congo DR": "DR Congo", "Bosnia-Herzegovina": "Bosnia and Herzegovina",
+                "Cote d'Ivoire": "Ivory Coast", "Côte d'Ivoire": "Ivory Coast",
+                "Côte d’Ivoire": "Ivory Coast", "USA": "United States"}
 COUNTRY_ALIASES = {"USA": "United States"}
 STAT_MAP = {
     "totalShots": "shots",

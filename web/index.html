@@ -407,12 +407,12 @@ function renderStaticBracket(verdict = DATA.verdict, whatif=false) {
 
 function renderRatings() {
   $('ratingsTbl').innerHTML =
-    `<tr><th>#</th><th>Team</th><th class="num">attack α</th><th class="num">defence β</th><th class="num">rank</th><th class="num">top23</th><th>top player</th></tr>` +
+    `<tr><th>#</th><th>Team</th><th class="num">attack α</th><th class="num">defence β</th><th class="num">rank</th><th class="num">top23</th><th>WC impact</th></tr>` +
     DATA.ratings.map((r, i) =>
       `<tr><td class="mut">${i + 1}</td><td>${r.team}</td>
        <td class="num">${r.attack.toFixed(2)}</td><td class="num">${r.defence.toFixed(2)}</td>
        <td class="num">${r.fifa_ranking ?? '—'}</td><td class="num">${money(r.top23_market_value)}</td>
-       <td>${r.top_player || '—'}</td></tr>`).join('');
+       <td>${r.fiwc_impact_player || r.top_player || '—'}</td></tr>`).join('');
 }
 
 function renderExternal() {
@@ -426,12 +426,13 @@ function renderExternal() {
   $('externalMeta').textContent = `${ex.teams.length} national teams · ${meta.source || 'external source'} · ${meta.generated || ''}`;
   $('externalTbl').innerHTML =
     `<tr><th>Team</th><th>Confed</th><th class="num">FIFA rank</th><th class="num">players</th>
-     <th class="num">top 11</th><th class="num">top 23</th><th>top player</th><th class="num">top 1</th><th class="num">chem</th><th class="num">caps</th><th class="num">goals</th></tr>` +
+     <th class="num">top 11</th><th class="num">top 23</th><th>WC impact</th><th class="num">top impact</th><th>market top</th><th class="num">chem</th><th class="num">caps</th><th class="num">goals</th></tr>` +
     ex.teams.slice(0, 32).map(r =>
       `<tr><td>${r.team}</td><td>${r.confederation || '—'}</td><td class="num">${r.fifa_ranking ?? '—'}</td>
        <td class="num">${r.current_nt_players ?? '—'}</td><td class="num">${money(r.top11_market_value)}</td>
-       <td class="num">${money(r.top23_market_value)}</td><td>${r.top_player || '—'}</td>
-       <td class="num">${money(r.top1_market_value)}</td><td class="num">${r.chemistry_score == null ? '—' : r.chemistry_score.toFixed(2)}</td>
+       <td class="num">${money(r.top23_market_value)}</td><td>${r.fiwc_impact_player || '—'}</td>
+       <td class="num">${r.fiwc_top_impact_score == null ? '—' : r.fiwc_top_impact_score.toFixed(1)}</td>
+       <td>${r.top_player || '—'}</td><td class="num">${r.chemistry_score == null ? '—' : r.chemistry_score.toFixed(2)}</td>
        <td class="num">${r.squad_caps ?? '—'}</td>
        <td class="num">${r.squad_goals ?? '—'}</td></tr>`).join('');
 }
@@ -496,7 +497,7 @@ function externalLine(c) {
   const pf = c.pre_match_form_prior || null;
   const h = c.external?.home, a = c.external?.away;
   const star = h && a
-    ? `x-factor: ${h.team} ${h.top_player || '—'} ${money(h.top1_market_value)} vs ${a.team} ${a.top_player || '—'} ${money(a.top1_market_value)}<br>`
+    ? `x-factor: ${h.team} ${h.fiwc_impact_player || h.top_player || '—'} vs ${a.team} ${a.fiwc_impact_player || a.top_player || '—'}<br>`
     : '';
   const pre = pf
     ? `pre-match form: strength ${pf.home_strength ?? 'n/a'} vs ${pf.away_strength ?? 'n/a'}, log-rate shift ${pf.log_rate_adjustment ?? 0} as of ${pf.as_of}<br>`

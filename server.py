@@ -96,6 +96,9 @@ def _load_external_payload():
             "chemistry_score", "position_balance", "same_club_share",
             "fiwc_player_appearances", "fiwc_minutes", "fiwc_player_goals",
             "fiwc_assists", "fiwc_yellow_cards", "fiwc_red_cards",
+            "fiwc_impact_score", "fiwc_impact_player", "fiwc_impact_player_position",
+            "fiwc_top_impact_score", "fiwc_top_impact_goals",
+            "fiwc_top_impact_assists", "fiwc_top_impact_minutes",
             "fiwc_starts", "fiwc_captain_starts"]
     for col in keep:
         if col not in df:
@@ -120,6 +123,8 @@ def _attach_external(payload):
                 "top_player": e.get("top_player"),
                 "top1_market_value": e.get("top1_market_value"),
                 "top_attacker_market_value": e.get("top_attacker_market_value"),
+                "fiwc_impact_player": e.get("fiwc_impact_player"),
+                "fiwc_impact_score": e.get("fiwc_impact_score"),
                 "squad_caps": e.get("squad_caps"),
                 "squad_goals": e.get("squad_goals"),
             })

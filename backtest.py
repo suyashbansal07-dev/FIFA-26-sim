@@ -164,7 +164,7 @@ def write_backtest(start="2026-01-01", refit_days=45, train_years=4.0,
                    form_weight=DEFAULT_FORM_WEIGHT, verbose=True):
     df = load_matches(years=train_years + 1.5)
     df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
-    external_strength, external_meta = load_external_strength()
+    external_strength, external_meta = load_external_strength(use_fiwc_impact=False)
     if not external_meta.get("present"):
         external_weight = 0.0
     features = load_match_features()
@@ -195,7 +195,7 @@ def main():
     if args.sweep:
         df = load_matches(years=args.train_years + 1.5)
         df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
-        external_strength, _ = load_external_strength()
+        external_strength, _ = load_external_strength(use_fiwc_impact=False)
         features = load_match_features()
         print("half-life | friendly-w | external-w | RPS     | logloss | in-sample RPS")
         best = None
