@@ -244,9 +244,12 @@ def test_confederation_inference_uses_competition_evidence():
 
 
 def test_forward_loop_settles_only_pre_match_forecasts():
+    import json
     from forward_loop import record_payload_forecasts, settle_forward_forecasts
     payload = {"meta": {"generated": "2026-07-01T00:00:00+00:00", "half_life_days": 550,
-                        "friendly_weight": 1, "hfa": 0.2, "rho": -0.08},
+                        "friendly_weight": 1, "goal_scale": 1.1, "external_weight": 0.15,
+                        "form_weight": 0.02, "sampler": "antithetic", "sims": 1000000,
+                        "hfa": 0.2, "rho": -0.08},
                "fixtures": [{"id": "R16-1", "date": "2026-07-04", "home": "Canada",
                              "away": "Morocco", "venue": "United States", "played": False,
                              "p_home": 0.2, "p_draw": 0.3, "p_away": 0.5, "over25": 0.4}]}
@@ -257,6 +260,10 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         ledger = Path(d) / "ledger.jsonl"
         report = Path(d) / "calibration.json"
         record_payload_forecasts(payload, ledger, now=pd.Timestamp("2026-07-01", tz="UTC").to_pydatetime())
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        assert rows[0]["model"]["external_weight"] == 0.15
+        assert rows[0]["model"]["form_weight"] == 0.02
+        assert rows[0]["model"]["sims"] == 1000000
         settled = settle_forward_forecasts(matches, ledger, report)
         assert settled["settled"] == 1 and settled["pending"] == 0 and settled["late_excluded"] == 0
         record_payload_forecasts(payload, ledger, now=pd.Timestamp("2026-07-05", tz="UTC").to_pydatetime())
@@ -518,6 +525,12 @@ def test_state_refresh_and_freshness_detect_new_day_staleness():
         {"generated": "2026-07-05T08:00:00+00:00"}, today="2026-07-06")
     assert not server._state_needs_refresh(
         {"generated": "2026-07-06T01:00:00+00:00"}, today="2026-07-06")
+    assert server._state_needs_refresh(
+        {"generated": "2026-07-06T01:00:00+00:00"},
+        today="2026-07-06T01:16:00+00:00", max_age_hours=0.25)
+    assert not server._state_needs_refresh(
+        {"generated": "2026-07-06T01:00:00+00:00"},
+        today="2026-07-06T01:14:00+00:00", max_age_hours=0.25)
     bracket = {
         "r16": [{"id": "R16-1", "home": "A", "away": "B",
                  "venue_country": "X", "date": "2026-07-05"}],

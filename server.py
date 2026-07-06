@@ -497,11 +497,21 @@ def _state_compatible(payload):
                 and payload.get("verdict"))
 
 
-def _state_needs_refresh(meta, today=None):
+def _utc_timestamp(value):
+    ts = pd.Timestamp(value)
+    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
+def _state_needs_refresh(meta, today=None, max_age_hours=None):
     if not meta.get("generated"):
         return True
-    today = pd.Timestamp(today).date() if today is not None else pd.Timestamp.today().date()
-    return pd.Timestamp(meta["generated"]).date() < today
+    now = _utc_timestamp(today) if today is not None else pd.Timestamp.now(tz="UTC")
+    generated = _utc_timestamp(meta["generated"])
+    if generated.date() < now.date():
+        return True
+    if max_age_hours and max_age_hours > 0:
+        return (now - generated).total_seconds() > max_age_hours * 3600
+    return False
 
 
 def _freshness_meta(fetch_meta, bracket, known, today=None):
@@ -858,7 +868,7 @@ def main():
             or meta.get("goal_scale") != CFG["goal_scale"]
             or meta.get("external_weight") != CFG["external_weight"]
             or meta.get("form_weight") != CFG["form_weight"]
-            or _state_needs_refresh(meta)):
+            or _state_needs_refresh(meta, max_age_hours=args.auto_refresh_hours)):
         print("refreshing state (scrape + fit + simulate)...")
         refresh()
     print(f"model ready: {STATE['payload']['meta']}")
