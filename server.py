@@ -326,6 +326,7 @@ def case_diagnostic(home, away, venue="", date=None):
         home, away, STATE.get("external_strength"), CFG["external_weight"])
     form_adj = form_rate_adjustment(
         home, away, STATE.get("form_strength"), CFG["form_weight"])
+    pre_match_form = _pre_match_form_prior(home, away, day)
     return _jsonable({
         "card": c,
         "result": result,
@@ -345,9 +346,32 @@ def case_diagnostic(home, away, venue="", date=None):
             "log_rate_adjustment": round(form_adj, 4),
             "meta": STATE.get("form_meta", {}),
         },
+        "pre_match_form_prior": pre_match_form,
         "total_log_rate_adjustment": round(external_adj + form_adj, 4),
         "recent": {home: _recent_team_results(home), away: _recent_team_results(away)},
         "notes": notes,
+    })
+
+
+def _pre_match_form_prior(home, away, day, df=None, features=None):
+    if not day:
+        return None
+    df = df if df is not None else load_matches(CFG["years"])
+    features = features if features is not None else load_match_features(ROOT)
+    strength, meta = build_recent_form_strength(
+        df,
+        as_of=day,
+        features=features,
+        external_strength=STATE.get("external_strength"),
+    )
+    adj = form_rate_adjustment(home, away, strength, CFG["form_weight"])
+    return _jsonable({
+        "as_of": str(pd.Timestamp(day).date()),
+        "weight": CFG["form_weight"],
+        "home_strength": strength.get(home),
+        "away_strength": strength.get(away),
+        "log_rate_adjustment": round(adj, 4),
+        "meta": meta,
     })
 
 

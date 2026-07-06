@@ -447,6 +447,31 @@ def test_load_state_rejects_stale_no_bronze_payload():
             server.STATE.update(old_state)
 
 
+def test_case_pre_match_form_prior_excludes_current_match():
+    import server
+    old_weight = server.CFG["form_weight"]
+    old_state = {k: v for k, v in server.STATE.items()}
+    rows = pd.DataFrame([
+        {"date": "2026-07-01", "home_team": "A", "away_team": "B",
+         "home_score": 0, "away_score": 0},
+        {"date": "2026-07-02", "home_team": "B", "away_team": "A",
+         "home_score": 0, "away_score": 0},
+        {"date": "2026-07-05", "home_team": "A", "away_team": "B",
+         "home_score": 5, "away_score": 0},
+    ])
+    try:
+        server.CFG["form_weight"] = 0.04
+        server.STATE["external_strength"] = {}
+        pre = server._pre_match_form_prior("A", "B", "2026-07-05", df=rows, features=pd.DataFrame())
+        post = server._pre_match_form_prior("A", "B", "2026-07-06", df=rows, features=pd.DataFrame())
+        assert pre["home_strength"] == 0.0 and pre["away_strength"] == 0.0
+        assert post["home_strength"] > post["away_strength"]
+    finally:
+        server.CFG["form_weight"] = old_weight
+        server.STATE.clear()
+        server.STATE.update(old_state)
+
+
 def test_state_refresh_and_freshness_detect_new_day_staleness():
     import server
     assert server._state_needs_refresh(
