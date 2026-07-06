@@ -445,10 +445,12 @@ def test_server_applies_forward_calibration_once():
         root = Path(d)
         old_report, old_applied = server.FORWARD_CALIBRATION, server.FORWARD_CALIBRATION_APPLIED
         old_weight = server.CFG["external_weight"]
+        old_live_weight = server.CFG["live_weight"]
         server.FORWARD_CALIBRATION = root / "forward_calibration.json"
         server.FORWARD_CALIBRATION_APPLIED = root / "forward_calibration_applied.json"
         try:
             server.CFG["external_weight"] = 0.12
+            server.CFG["live_weight"] = 0.03
             server.FORWARD_CALIBRATION.write_text(json.dumps({
                 "generated": "g-hold",
                 "calibration_policy": {"action": "hold", "reason": "need 12", "settled": 2},
@@ -463,13 +465,17 @@ def test_server_applies_forward_calibration_once():
             }))
             out = server._apply_forward_calibration()
             assert out["applied"] and out["before"] == 0.12 and out["after"] == 0.13
+            assert out["knobs"]["live_weight"]["before"] == 0.03
+            assert out["knobs"]["live_weight"]["after"] == 0.035
             again = server._apply_forward_calibration()
             assert not again["applied"] and again["reason"] == "already applied"
             assert server.CFG["external_weight"] == 0.13
+            assert abs(server.CFG["live_weight"] - 0.035) < 1e-12
         finally:
             server.FORWARD_CALIBRATION = old_report
             server.FORWARD_CALIBRATION_APPLIED = old_applied
             server.CFG["external_weight"] = old_weight
+            server.CFG["live_weight"] = old_live_weight
 
 
 def test_match_feature_extracts_stats_and_xg_from_espn_shapes():

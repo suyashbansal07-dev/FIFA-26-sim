@@ -162,12 +162,17 @@ def calibration_policy(settled, min_settled=12):
         action = "allow_slightly_more_prior_confidence"
     else:
         action = "keep_current_defaults"
-    return {
+    policy = {
         "action": action,
         "favorite_gap": round(gap, 4),
         "settled": len(settled),
         "min_settled": min_settled,
     }
+    if action == "reduce_prior_or_goal_confidence":
+        policy["knob_adjustments"] = {"external_weight": -0.01, "live_weight": -0.005}
+    elif action == "allow_slightly_more_prior_confidence":
+        policy["knob_adjustments"] = {"external_weight": 0.01, "live_weight": 0.005}
+    return policy
 
 
 def settle_forward_forecasts(matches, ledger_path=LEDGER, out_path=CALIBRATION):
