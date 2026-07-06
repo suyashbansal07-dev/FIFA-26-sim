@@ -156,6 +156,11 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
                sum(coalesce(market_value_in_eur, 0)) as listed_market_value,
                sum(case when market_rank <= 11 then coalesce(market_value_in_eur, 0) else 0 end) as top11_market_value,
                sum(case when market_rank <= 23 then coalesce(market_value_in_eur, 0) else 0 end) as top23_market_value,
+               max(case when market_rank = 1 then market_value_in_eur end) as top1_market_value,
+               sum(case when market_rank <= 3 then coalesce(market_value_in_eur, 0) else 0 end) as top3_market_value,
+               max(case when position = 'Attack' then market_value_in_eur end) as top_attacker_market_value,
+               arg_max(player, market_value_in_eur) as top_player,
+               arg_max(position, market_value_in_eur) as top_player_position,
                sum(coalesce(international_caps, 0)) as squad_caps,
                sum(coalesce(international_goals, 0)) as squad_goals,
                max(tc.chemistry_score) as chemistry_score,
@@ -182,6 +187,11 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
                null::double as listed_market_value,
                null::double as top11_market_value,
                null::double as top23_market_value,
+               null::double as top1_market_value,
+               null::double as top3_market_value,
+               null::double as top_attacker_market_value,
+               null::varchar as top_player,
+               null::varchar as top_player_position,
                null::double as squad_caps,
                null::double as squad_goals,
                null::double as chemistry_score,
@@ -266,6 +276,7 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         con.sql(f"copy (select * from {view}) to '{_sql_path(out_dir / (view + '.csv'))}' (header, delimiter ',')")
     sample = con.sql("""
         select team, fifa_ranking, current_nt_players, top11_market_value, top23_market_value,
+               top_player, top1_market_value, top_attacker_market_value,
                chemistry_score, fiwc_minutes, fiwc_player_goals
         from project_team_enrichment
         order by top23_market_value desc nulls last

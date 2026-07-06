@@ -25,25 +25,28 @@ def _team(name):
     return TEAM_ALIASES.get(name, name)
 
 
-def espn_topup(matches, shootouts):
+def espn_topup(matches, shootouts, events=None, today=None):
     """Append finished WC matches that ESPN has but the bulk dataset doesn't yet."""
     played = matches.dropna(subset=["home_score"])
     newest = played["date"].max()
-    today = pd.Timestamp.today().normalize()
-    if newest >= today:
+    today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.today().normalize()
+    if newest >= today and events is None:
         return matches, shootouts, 0
 
-    span = f"{(newest - timedelta(days=1)):%Y%m%d}-{today:%Y%m%d}"
-    with urllib.request.urlopen(ESPN.format(span=span), timeout=30) as r:
-        events = json.load(r).get("events", [])
+    if events is None:
+        span = f"{(newest - timedelta(days=1)):%Y%m%d}-{today:%Y%m%d}"
+        with urllib.request.urlopen(ESPN.format(span=span), timeout=30) as r:
+            events = json.load(r).get("events", [])
 
-    recent = played[played["date"] >= newest - timedelta(days=3)]
-    def already_have(h, a, date):
-        near = recent[(recent["date"] - date).abs() <= pd.Timedelta(days=2)]
-        return (((near["home_team"] == h) & (near["away_team"] == a))
-                | ((near["home_team"] == a) & (near["away_team"] == h))).any()
+    recent = matches[matches["date"] >= newest - timedelta(days=3)]
+
+    def pair_rows(frame, h, a, date):
+        near = frame[(frame["date"] - date).abs() <= pd.Timedelta(days=2)]
+        return near[(((near["home_team"] == h) & (near["away_team"] == a))
+                     | ((near["home_team"] == a) & (near["away_team"] == h)))]
 
     new_rows, new_pens = [], []
+    consumed = 0
     for ev in events:
         if ev["status"]["type"]["name"] not in COMPLETE:
             continue
@@ -51,16 +54,24 @@ def espn_topup(matches, shootouts):
         sides = {c["homeAway"]: c for c in comp["competitors"]}
         h, a = _team(sides["home"]["team"]["displayName"]), _team(sides["away"]["team"]["displayName"])
         date = pd.Timestamp(ev["date"][:10])
-        if already_have(h, a, date):
+        if not pair_rows(recent.dropna(subset=["home_score"]), h, a, date).empty:
             continue
         addr = comp.get("venue", {}).get("address", {})
         country = COUNTRY_ALIASES.get(addr.get("country", ""), addr.get("country", ""))
-        new_rows.append({
+        row = {
             "date": date, "home_team": h, "away_team": a,
             "home_score": int(sides["home"]["score"]), "away_score": int(sides["away"]["score"]),
             "tournament": "FIFA World Cup", "city": addr.get("city", ""), "country": country,
             "neutral": h != country,
-        })
+        }
+        pending = pair_rows(recent[recent["home_score"].isna()], h, a, date)
+        if not pending.empty:
+            i = pending.index[-1]
+            for k, v in row.items():
+                matches.loc[i, k] = v
+            consumed += 1
+        else:
+            new_rows.append(row)
         if ev["status"]["type"]["name"] == "STATUS_FINAL_PEN":
             winner = next(_team(c["team"]["displayName"]) for c in comp["competitors"] if c.get("winner"))
             new_pens.append({"date": date, "home_team": h, "away_team": a,
@@ -70,7 +81,7 @@ def espn_topup(matches, shootouts):
         matches = pd.concat([matches, pd.DataFrame(new_rows)], ignore_index=True)
     if new_pens:
         shootouts = pd.concat([shootouts, pd.DataFrame(new_pens)], ignore_index=True)
-    return matches, shootouts, len(new_rows)
+    return matches, shootouts, consumed + len(new_rows)
 
 
 def fetch(quiet=False):

@@ -33,18 +33,27 @@ def build_external_strength(df: pd.DataFrame):
     df = df.copy()
     top23 = _num_col(df, "top23_market_value")
     top11 = _num_col(df, "top11_market_value")
+    top1 = _num_col(df, "top1_market_value")
+    top3 = _num_col(df, "top3_market_value")
+    top_attacker = _num_col(df, "top_attacker_market_value")
     quality_value = top11.where(top11.notna(), top23)
     depth_value = (top23 - top11).where(top23.notna() & top11.notna())
     quality = _z(np.log1p(quality_value.clip(lower=0)))
     depth = _z(np.log1p(depth_value.clip(lower=0)))
+    star_share = (top1 / top23.replace(0, np.nan)).clip(lower=0, upper=1)
+    star = (0.60 * _z(np.log1p(top1.clip(lower=0)))
+            + 0.25 * _z(np.log1p(top3.clip(lower=0)))
+            + 0.15 * _z(star_share))
+    attacker = _z(np.log1p(top_attacker.clip(lower=0)))
     rank = _z(-np.log(_num_col(df, "fifa_ranking").clip(lower=1)))
     caps = _z(np.log1p(_num_col(df, "squad_caps").clip(lower=0)))
     goals = _z(np.log1p(_num_col(df, "squad_goals").clip(lower=0)))
     chemistry = _z(_num_col(df, "chemistry_score"))
     position = _z(_num_col(df, "position_balance"))
     same_club = _z(_num_col(df, "same_club_share"))
-    raw = (0.31 * quality + 0.14 * depth + 0.35 * rank + 0.06 * caps
-           + 0.03 * goals + 0.06 * chemistry + 0.03 * position + 0.02 * same_club)
+    raw = (0.29 * quality + 0.13 * depth + 0.35 * rank + 0.055 * caps
+           + 0.03 * goals + 0.055 * chemistry + 0.03 * position + 0.02 * same_club
+           + 0.025 * star + 0.015 * attacker)
     strength = raw.clip(-2.5, 2.5)
     return {team: round(float(v), 4) for team, v in zip(df["team"], strength) if pd.notna(team)}
 

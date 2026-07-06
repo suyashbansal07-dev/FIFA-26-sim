@@ -91,6 +91,8 @@ def _load_external_payload():
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     keep = ["team", "confederation", "fifa_ranking", "current_nt_players",
             "top11_market_value", "top23_market_value", "squad_caps", "squad_goals",
+            "top_player", "top_player_position", "top1_market_value",
+            "top3_market_value", "top_attacker_market_value",
             "chemistry_score", "position_balance", "same_club_share",
             "fiwc_player_appearances", "fiwc_minutes", "fiwc_player_goals",
             "fiwc_assists", "fiwc_yellow_cards", "fiwc_red_cards",
@@ -115,6 +117,9 @@ def _attach_external(payload):
             r.update({
                 "fifa_ranking": e.get("fifa_ranking"),
                 "top23_market_value": e.get("top23_market_value"),
+                "top_player": e.get("top_player"),
+                "top1_market_value": e.get("top1_market_value"),
+                "top_attacker_market_value": e.get("top_attacker_market_value"),
                 "squad_caps": e.get("squad_caps"),
                 "squad_goals": e.get("squad_goals"),
             })
@@ -436,6 +441,7 @@ def refresh():
                      "sampler": CFG["sampler"],
                      "uncertainty": uncertainty,
                      "forward_calibration_applied": calibration_applied,
+                     "freshness": _freshness_meta(fetch_meta, bracket, known),
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "fixtures": fixtures,
             "tree": {k: bracket[k] for k in ("qf", "sf", "final")},
@@ -465,6 +471,23 @@ def _state_compatible(payload):
     return bool(payload and payload.get("bracket")
                 and all("bronze" in row for row in payload["bracket"])
                 and payload.get("verdict"))
+
+
+def _state_needs_refresh(meta, today=None):
+    if not meta.get("generated"):
+        return True
+    today = pd.Timestamp(today).date() if today is not None else pd.Timestamp.today().date()
+    return pd.Timestamp(meta["generated"]).date() < today
+
+
+def _freshness_meta(fetch_meta, bracket, known, today=None):
+    today = pd.Timestamp(today).date() if today is not None else pd.Timestamp.today().date()
+    due = [fx["id"] for fx in resolved_fixtures(bracket, known)
+           if fx["id"] not in known and pd.Timestamp(fx["date"]).date() < today]
+    newest = fetch_meta.get("newest_result")
+    lag = (today - pd.Timestamp(newest).date()).days if newest else None
+    return {"today": today.isoformat(), "result_lag_days": lag,
+            "overdue_unplayed_slots": due, "stale": bool(due)}
 
 
 def load_state():
@@ -810,7 +833,8 @@ def main():
             or meta.get("friendly_weight") != CFG["friendly_weight"]
             or meta.get("goal_scale") != CFG["goal_scale"]
             or meta.get("external_weight") != CFG["external_weight"]
-            or meta.get("form_weight") != CFG["form_weight"]):
+            or meta.get("form_weight") != CFG["form_weight"]
+            or _state_needs_refresh(meta)):
         print("refreshing state (scrape + fit + simulate)...")
         refresh()
     print(f"model ready: {STATE['payload']['meta']}")

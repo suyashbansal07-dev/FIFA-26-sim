@@ -86,6 +86,21 @@ def test_external_strength_uses_quality_depth_and_chemistry():
     assert strength["Balanced"] > strength["Thin"]
 
 
+def test_external_strength_uses_star_x_factor_without_team_exceptions():
+    from external_signals import build_external_strength
+    common = {"top11_market_value": 500_000_000, "top23_market_value": 700_000_000,
+              "fifa_ranking": 20, "squad_caps": 500, "squad_goals": 80,
+              "chemistry_score": 0.7, "position_balance": 0.8, "same_club_share": 0.1}
+    rows = pd.DataFrame([
+        {"team": "OneStar", **common, "top1_market_value": 200_000_000,
+         "top3_market_value": 300_000_000, "top_attacker_market_value": 200_000_000},
+        {"team": "Flat", **common, "top1_market_value": 60_000_000,
+         "top3_market_value": 170_000_000, "top_attacker_market_value": 60_000_000},
+    ])
+    strength = build_external_strength(rows)
+    assert strength["OneStar"] > strength["Flat"]
+
+
 def test_fifa_live_ranking_rows_are_canonicalized():
     from fifa_rankings import rows_from_payload
     payload = {"Results": [
@@ -250,6 +265,30 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         assert settled["calibration_policy"]["action"] == "hold"
 
 
+def test_espn_topup_fills_pending_fixture_instead_of_duplicating():
+    from fetch_data import espn_topup
+    matches = pd.DataFrame([
+        {"date": pd.Timestamp("2026-07-05"), "home_team": "Mexico", "away_team": "England",
+         "home_score": np.nan, "away_score": np.nan, "tournament": "FIFA World Cup",
+         "city": "Mexico City", "country": "Mexico", "neutral": False},
+        {"date": pd.Timestamp("2026-07-04"), "home_team": "Canada", "away_team": "Morocco",
+         "home_score": 0.0, "away_score": 3.0, "tournament": "FIFA World Cup",
+         "city": "Houston", "country": "United States", "neutral": True},
+    ])
+    event = {"date": "2026-07-06T00:30Z", "status": {"type": {"name": "STATUS_FULL_TIME"}},
+             "competitions": [{"venue": {"address": {"city": "Mexico City", "country": "Mexico"}},
+                               "competitors": [
+                                   {"homeAway": "home", "score": "2",
+                                    "team": {"displayName": "Mexico"}},
+                                   {"homeAway": "away", "score": "3",
+                                    "team": {"displayName": "England"}},
+                               ]}]}
+    out, pens, n = espn_topup(matches, pd.DataFrame(), events=[event], today="2026-07-06")
+    assert n == 1 and len(out) == 2
+    row = out[out["home_team"].eq("Mexico") & out["away_team"].eq("England")].iloc[0]
+    assert row["home_score"] == 2 and row["away_score"] == 3
+
+
 def test_server_applies_forward_calibration_once():
     import json
     import server
@@ -327,7 +366,10 @@ def test_external_payload_enriches_ratings():
         try:
             pd.DataFrame([{"team": "Canada", "confederation": "CONCACAF", "fifa_ranking": 30,
                            "current_nt_players": 37, "top11_market_value": 165500000,
-                           "top23_market_value": 199500000, "squad_caps": 1184,
+                           "top23_market_value": 199500000, "top_player": "Alphonso Davies",
+                           "top_player_position": "Defender", "top1_market_value": 50000000,
+                           "top3_market_value": 95000000, "top_attacker_market_value": 12000000,
+                           "squad_caps": 1184,
                            "squad_goals": 158, "fiwc_player_appearances": 44,
                            "fiwc_minutes": 2700, "fiwc_player_goals": 7,
                            "fiwc_assists": 4, "fiwc_yellow_cards": 2,
@@ -337,6 +379,8 @@ def test_external_payload_enriches_ratings():
             assert out["external"]["present"] and out["meta"]["external_data"]["rows"] == 1
             assert out["ratings"][0]["fifa_ranking"] == 30
             assert out["ratings"][0]["top23_market_value"] == 199500000
+            assert out["ratings"][0]["top_player"] == "Alphonso Davies"
+            assert out["external"]["teams"][0]["top1_market_value"] == 50000000
             assert out["external"]["teams"][0]["fiwc_minutes"] == 2700
             assert out["external"]["teams"][0]["fiwc_assists"] == 4
         finally:
@@ -401,6 +445,22 @@ def test_load_state_rejects_stale_no_bronze_payload():
             server.STATE_FILE = old_state_file
             server.STATE.clear()
             server.STATE.update(old_state)
+
+
+def test_state_refresh_and_freshness_detect_new_day_staleness():
+    import server
+    assert server._state_needs_refresh(
+        {"generated": "2026-07-05T08:00:00+00:00"}, today="2026-07-06")
+    assert not server._state_needs_refresh(
+        {"generated": "2026-07-06T01:00:00+00:00"}, today="2026-07-06")
+    bracket = {
+        "r16": [{"id": "R16-1", "home": "A", "away": "B",
+                 "venue_country": "X", "date": "2026-07-05"}],
+        "qf": [], "sf": [], "final": {"id": "F", "from": ["SF-1", "SF-2"]},
+    }
+    f = server._freshness_meta({"newest_result": "2026-07-04"}, bracket, {}, today="2026-07-06")
+    assert f["stale"] and f["overdue_unplayed_slots"] == ["R16-1"]
+    assert f["result_lag_days"] == 2
 
 
 def test_forward_safe_context_uses_only_prior_matches():

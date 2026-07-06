@@ -207,8 +207,9 @@ function renderMeta() {
     ? ` · calibration ${m.forward_loop.calibration_policy.action}` : '';
   const applied = m.forward_calibration_applied?.applied
     ? ` · applied ${m.forward_calibration_applied.knob} ${m.forward_calibration_applied.before}→${m.forward_calibration_applied.after}` : '';
+  const fresh = m.freshness?.stale ? ` · stale slots ${m.freshness.overdue_unplayed_slots.join(',')}` : '';
   $('meta').textContent = `${m.trained_matches} matches (${m.train_from} → ${m.newest_result}) · ` +
-    `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho}${unc}${cal}${applied} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
+    `${m.teams} teams · hfa ${m.hfa} · rho ${m.rho}${unc}${cal}${applied}${fresh} · updated ${m.generated.slice(0, 16).replace('T', ' ')}Z`;
   $('simsNote').textContent = `${m.sims.toLocaleString()} ${m.sampler || 'antithetic'} Monte Carlo paths`;
 }
 
@@ -406,11 +407,12 @@ function renderStaticBracket(verdict = DATA.verdict, whatif=false) {
 
 function renderRatings() {
   $('ratingsTbl').innerHTML =
-    `<tr><th>#</th><th>Team</th><th class="num">attack α</th><th class="num">defence β</th><th class="num">rank</th><th class="num">top23</th></tr>` +
+    `<tr><th>#</th><th>Team</th><th class="num">attack α</th><th class="num">defence β</th><th class="num">rank</th><th class="num">top23</th><th>top player</th></tr>` +
     DATA.ratings.map((r, i) =>
       `<tr><td class="mut">${i + 1}</td><td>${r.team}</td>
        <td class="num">${r.attack.toFixed(2)}</td><td class="num">${r.defence.toFixed(2)}</td>
-       <td class="num">${r.fifa_ranking ?? '—'}</td><td class="num">${money(r.top23_market_value)}</td></tr>`).join('');
+       <td class="num">${r.fifa_ranking ?? '—'}</td><td class="num">${money(r.top23_market_value)}</td>
+       <td>${r.top_player || '—'}</td></tr>`).join('');
 }
 
 function renderExternal() {
@@ -424,11 +426,12 @@ function renderExternal() {
   $('externalMeta').textContent = `${ex.teams.length} national teams · ${meta.source || 'external source'} · ${meta.generated || ''}`;
   $('externalTbl').innerHTML =
     `<tr><th>Team</th><th>Confed</th><th class="num">FIFA rank</th><th class="num">players</th>
-     <th class="num">top 11</th><th class="num">top 23</th><th class="num">chem</th><th class="num">caps</th><th class="num">goals</th></tr>` +
+     <th class="num">top 11</th><th class="num">top 23</th><th>top player</th><th class="num">top 1</th><th class="num">chem</th><th class="num">caps</th><th class="num">goals</th></tr>` +
     ex.teams.slice(0, 32).map(r =>
       `<tr><td>${r.team}</td><td>${r.confederation || '—'}</td><td class="num">${r.fifa_ranking ?? '—'}</td>
        <td class="num">${r.current_nt_players ?? '—'}</td><td class="num">${money(r.top11_market_value)}</td>
-       <td class="num">${money(r.top23_market_value)}</td><td class="num">${r.chemistry_score == null ? '—' : r.chemistry_score.toFixed(2)}</td>
+       <td class="num">${money(r.top23_market_value)}</td><td>${r.top_player || '—'}</td>
+       <td class="num">${money(r.top1_market_value)}</td><td class="num">${r.chemistry_score == null ? '—' : r.chemistry_score.toFixed(2)}</td>
        <td class="num">${r.squad_caps ?? '—'}</td>
        <td class="num">${r.squad_goals ?? '—'}</td></tr>`).join('');
 }
@@ -490,7 +493,12 @@ function featureLine(f) {
 function externalLine(c) {
   const p = c.external_prior || {};
   const f = c.form_prior || {};
-  return `external prior: weight ${p.weight ?? 0}, strength ${p.home_strength ?? 'n/a'} vs ${p.away_strength ?? 'n/a'}, log-rate shift ${p.log_rate_adjustment ?? 0}<br>` +
+  const h = c.external?.home, a = c.external?.away;
+  const star = h && a
+    ? `x-factor: ${h.team} ${h.top_player || '—'} ${money(h.top1_market_value)} vs ${a.team} ${a.top_player || '—'} ${money(a.top1_market_value)}<br>`
+    : '';
+  return star +
+         `external prior: weight ${p.weight ?? 0}, strength ${p.home_strength ?? 'n/a'} vs ${p.away_strength ?? 'n/a'}, log-rate shift ${p.log_rate_adjustment ?? 0}<br>` +
          `form prior: weight ${f.weight ?? 0}, strength ${f.home_strength ?? 'n/a'} vs ${f.away_strength ?? 'n/a'}, log-rate shift ${f.log_rate_adjustment ?? 0}<br>` +
          `total log-rate shift ${c.total_log_rate_adjustment ?? 0}`;
 }
