@@ -83,6 +83,7 @@ def record_payload_forecasts(payload, ledger_path=LEDGER, now=None):
                 "goal_scale": payload["meta"].get("goal_scale"),
                 "external_weight": payload["meta"].get("external_weight"),
                 "form_weight": payload["meta"].get("form_weight"),
+                "live_weight": payload["meta"].get("live_weight"),
                 "sampler": payload["meta"].get("sampler"),
                 "sims": payload["meta"].get("sims"),
                 "hfa": payload["meta"].get("hfa"),

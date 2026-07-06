@@ -210,6 +210,37 @@ def test_form_prior_moves_rates_after_external_prior():
     assert lam > 1.0 and mu < 1.0
 
 
+def test_live_context_strength_uses_wc_xg_and_stat_momentum():
+    from live_signals import build_live_context_strength, live_rate_adjustment
+    rows = pd.DataFrame([
+        {"date": "2026-06-20", "home_team": "Momentum", "away_team": "Flat",
+         "home_score": 1, "away_score": 1, "tournament": "FIFA World Cup"},
+        {"date": "2026-06-25", "home_team": "Flat", "away_team": "Momentum",
+         "home_score": 0, "away_score": 0, "tournament": "FIFA World Cup"},
+    ])
+    features = pd.DataFrame([
+        {"date": "2026-06-20", "home_team": "Momentum", "away_team": "Flat",
+         "home_xg": 2.1, "away_xg": 0.4, "home_shots": 20, "away_shots": 4,
+         "home_sot": 7, "away_sot": 1, "home_corners": 8, "away_corners": 1,
+         "home_possession": 64, "away_possession": 36},
+        {"date": "2026-06-25", "home_team": "Flat", "away_team": "Momentum",
+         "home_xg": 0.3, "away_xg": 1.9, "home_shots": 5, "away_shots": 18,
+         "home_sot": 1, "away_sot": 6, "home_corners": 2, "away_corners": 7,
+         "home_possession": 42, "away_possession": 58},
+    ])
+    strength, meta = build_live_context_strength(rows, features=features)
+    assert meta["matches"] == 2 and meta["xg_rows"] == 2
+    assert strength["Momentum"] > strength["Flat"]
+    assert live_rate_adjustment("Momentum", "Flat", strength, 0.03) > 0
+
+
+def test_live_prior_moves_rates_after_other_priors():
+    atk, dfn = {"A": 0.0, "B": 0.0}, {"A": 0.0, "B": 0.0}
+    lam, mu = match_rates(atk, dfn, 0.0, "A", "B", "", goal_scale=1.0,
+                          live_strength={"A": 1.0, "B": -1.0}, live_weight=0.03)
+    assert lam > 1.0 and mu < 1.0
+
+
 def test_decay_weights_and_friendly_downweight():
     dates = pd.Series(pd.to_datetime(["2026-01-01", "2026-01-01", "2024-01-01"]))
     friendly = pd.Series([False, True, False])
@@ -289,7 +320,8 @@ def test_forward_loop_settles_only_pre_match_forecasts():
     from forward_loop import record_payload_forecasts, settle_forward_forecasts
     payload = {"meta": {"generated": "2026-07-01T00:00:00+00:00", "half_life_days": 550,
                         "friendly_weight": 1, "goal_scale": 1.1, "external_weight": 0.15,
-                        "form_weight": 0.02, "sampler": "antithetic", "sims": 1000000,
+                        "form_weight": 0.02, "live_weight": 0.03,
+                        "sampler": "antithetic", "sims": 1000000,
                         "hfa": 0.2, "rho": -0.08},
                "fixtures": [{"id": "R16-1", "date": "2026-07-04", "home": "Canada",
                              "away": "Morocco", "venue": "United States", "played": False,
@@ -304,6 +336,7 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         rows = [json.loads(line) for line in ledger.read_text().splitlines()]
         assert rows[0]["model"]["external_weight"] == 0.15
         assert rows[0]["model"]["form_weight"] == 0.02
+        assert rows[0]["model"]["live_weight"] == 0.03
         assert rows[0]["model"]["sims"] == 1000000
         settled = settle_forward_forecasts(matches, ledger, report)
         assert settled["settled"] == 1 and settled["pending"] == 0 and settled["late_excluded"] == 0
@@ -527,6 +560,7 @@ def test_load_state_attaches_external_strength_after_reload():
         root = Path(d)
         old_state_file, old_external_dir = server.STATE_FILE, server.EXTERNAL_DIR
         old_form_loader = server._load_form_strength
+        old_live_loader = server._load_live_strength
         old_state = {k: v for k, v in server.STATE.items()}
         server.STATE_FILE = root / "state.json"
         server.EXTERNAL_DIR = root / "external"
@@ -538,7 +572,7 @@ def test_load_state_attaches_external_strength_after_reload():
                 server.EXTERNAL_DIR / "project_team_enrichment.csv", index=False)
             (server.EXTERNAL_DIR / "external_meta.json").write_text(json.dumps({"source": "test"}))
             server.STATE_FILE.write_text(json.dumps({
-                "payload": {"meta": {}, "bracket": [{"team": "Canada", "bronze": 0.0}],
+                "payload": {"meta": {"live_weight": 0.03}, "bracket": [{"team": "Canada", "bronze": 0.0}],
                             "ratings": [{"team": "Canada"}],
                             "verdict": {"champion": "Canada", "matches": []}},
                 "pens": {},
@@ -547,6 +581,7 @@ def test_load_state_attaches_external_strength_after_reload():
             }))
             server.STATE.update({"payload": None, "external_strength": {}, "form_strength": {}})
             server._load_form_strength = lambda: ({}, {})
+            server._load_live_strength = lambda: ({}, {})
             assert server.load_state()
             meta = server.STATE["payload"]["meta"]["external_data"]
             assert meta["strength_rows"] == 1
@@ -555,6 +590,7 @@ def test_load_state_attaches_external_strength_after_reload():
             server.STATE_FILE = old_state_file
             server.EXTERNAL_DIR = old_external_dir
             server._load_form_strength = old_form_loader
+            server._load_live_strength = old_live_loader
             server.STATE.clear()
             server.STATE.update(old_state)
 
@@ -601,6 +637,34 @@ def test_case_pre_match_form_prior_excludes_current_match():
         assert post["home_strength"] > post["away_strength"]
     finally:
         server.CFG["form_weight"] = old_weight
+        server.STATE.clear()
+        server.STATE.update(old_state)
+
+
+def test_case_pre_match_live_prior_excludes_current_match():
+    import server
+    old_weight = server.CFG["live_weight"]
+    old_state = {k: v for k, v in server.STATE.items()}
+    rows = pd.DataFrame([
+        {"date": "2026-07-01", "home_team": "A", "away_team": "B",
+         "home_score": 0, "away_score": 0, "tournament": "FIFA World Cup"},
+        {"date": "2026-07-05", "home_team": "A", "away_team": "B",
+         "home_score": 4, "away_score": 0, "tournament": "FIFA World Cup"},
+    ])
+    features = pd.DataFrame([
+        {"date": "2026-07-05", "home_team": "A", "away_team": "B",
+         "home_xg": 3.0, "away_xg": 0.2, "home_shots": 22, "away_shots": 4,
+         "home_sot": 8, "away_sot": 1, "home_corners": 9, "away_corners": 1,
+         "home_possession": 68, "away_possession": 32},
+    ])
+    try:
+        server.CFG["live_weight"] = 0.03
+        pre = server._pre_match_live_prior("A", "B", "2026-07-05", df=rows, features=features)
+        post = server._pre_match_live_prior("A", "B", "2026-07-06", df=rows, features=features)
+        assert pre["home_strength"] == 0.0 and pre["away_strength"] == 0.0
+        assert post["home_strength"] > post["away_strength"]
+    finally:
+        server.CFG["live_weight"] = old_weight
         server.STATE.clear()
         server.STATE.update(old_state)
 

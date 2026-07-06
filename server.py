@@ -29,6 +29,7 @@ from consensus import build_consensus
 from external_signals import DEFAULT_EXTERNAL_WEIGHT, external_rate_adjustment, load_external_strength
 from form_signals import DEFAULT_FORM_WEIGHT, build_recent_form_strength, form_rate_adjustment
 from forward_loop import update_forward_loop
+from live_signals import DEFAULT_LIVE_WEIGHT, build_live_context_strength, live_rate_adjustment
 from match_features import load_match_features
 from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
                     load_matches, markets, match_rates, resolved_fixtures, run_ensemble,
@@ -47,16 +48,17 @@ FORWARD_CALIBRATION_APPLIED = ROOT / "output" / "forward_calibration_applied.jso
 app = Flask(__name__, static_folder="web", static_url_path="")
 STATE = {"payload": None, "params": None, "pens": {}, "samples": None,
          "external_strength": {}, "external_meta": {},
-         "form_strength": {}, "form_meta": {}}  # params = (atk, dfn, hfa, rho)
+         "form_strength": {}, "form_meta": {},
+         "live_strength": {}, "live_meta": {}}  # params = (atk, dfn, hfa, rho)
 LOCK = threading.Lock()
 BACKTEST_LOCK = threading.Lock()
 CFG = {"sims": DEFAULT_SIMS, "half_life": 1100.0, "friendly_weight": 1.0,
        "goal_scale": DEFAULT_GOAL_SCALE, "external_weight": DEFAULT_EXTERNAL_WEIGHT,
-       "form_weight": DEFAULT_FORM_WEIGHT,
+       "form_weight": DEFAULT_FORM_WEIGHT, "live_weight": DEFAULT_LIVE_WEIGHT,
        "years": 4.0, "sampler": "antithetic"}  # 1100d: sweep-validated, smallest OOS gap
 KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
                "goal_scale": (0.8, 1.3), "external_weight": (0.0, 0.15),
-               "form_weight": (0.0, 0.08),
+               "form_weight": (0.0, 0.08), "live_weight": (0.0, 0.06),
                "sims": (10_000, DEFAULT_SIMS)}
 
 
@@ -145,6 +147,8 @@ def _attach_external(payload):
         "strength_rows": len(STATE.get("external_strength") or {}),
         "form_weight": CFG["form_weight"],
         "form_strength_rows": len(STATE.get("form_strength") or {}),
+        "live_weight": CFG["live_weight"],
+        "live_strength_rows": len(STATE.get("live_strength") or {}),
     }
     return payload
 
@@ -157,6 +161,14 @@ def _load_form_strength(df=None):
         features=features,
         external_strength=STATE.get("external_strength"),
     )
+
+
+def _load_live_strength(df=None, as_of=None, features=None):
+    df = df if df is not None else load_matches(CFG["years"])
+    features = features if features is not None else load_match_features(ROOT)
+    return build_live_context_strength(
+        df, features=features, as_of=as_of,
+        external_strength=STATE.get("external_strength"))
 
 
 def _external_team(team, external=None):
@@ -338,7 +350,10 @@ def case_diagnostic(home, away, venue="", date=None):
         home, away, STATE.get("external_strength"), CFG["external_weight"])
     form_adj = form_rate_adjustment(
         home, away, STATE.get("form_strength"), CFG["form_weight"])
+    live_adj = live_rate_adjustment(
+        home, away, STATE.get("live_strength"), CFG["live_weight"])
     pre_match_form = _pre_match_form_prior(home, away, day)
+    pre_match_live = _pre_match_live_prior(home, away, day)
     return _jsonable({
         "card": c,
         "result": result,
@@ -359,7 +374,15 @@ def case_diagnostic(home, away, venue="", date=None):
             "meta": STATE.get("form_meta", {}),
         },
         "pre_match_form_prior": pre_match_form,
-        "total_log_rate_adjustment": round(external_adj + form_adj, 4),
+        "live_prior": {
+            "weight": CFG["live_weight"],
+            "home_strength": STATE.get("live_strength", {}).get(home),
+            "away_strength": STATE.get("live_strength", {}).get(away),
+            "log_rate_adjustment": round(live_adj, 4),
+            "meta": STATE.get("live_meta", {}),
+        },
+        "pre_match_live_prior": pre_match_live,
+        "total_log_rate_adjustment": round(external_adj + form_adj + live_adj, 4),
         "recent": {home: _recent_team_results(home), away: _recent_team_results(away)},
         "notes": notes,
     })
@@ -387,18 +410,34 @@ def _pre_match_form_prior(home, away, day, df=None, features=None):
     })
 
 
+def _pre_match_live_prior(home, away, day, df=None, features=None):
+    if not day:
+        return None
+    strength, meta = _load_live_strength(df=df, as_of=day, features=features)
+    adj = live_rate_adjustment(home, away, strength, CFG["live_weight"])
+    return _jsonable({
+        "as_of": str(pd.Timestamp(day).date()),
+        "weight": CFG["live_weight"],
+        "home_strength": strength.get(home),
+        "away_strength": strength.get(away),
+        "log_rate_adjustment": round(adj, 4),
+        "meta": meta,
+    })
+
+
 def card(home, away, venue=""):
     atk, dfn, hfa, rho = STATE["params"]
     lam, mu = match_rates(atk, dfn, hfa, home, away, venue, CFG["goal_scale"],
                           STATE.get("external_strength"), CFG["external_weight"],
-                          STATE.get("form_strength"), CFG["form_weight"])
+                          STATE.get("form_strength"), CFG["form_weight"],
+                          STATE.get("live_strength"), CFG["live_weight"])
     g = dc_grid(lam, mu, rho)
     h, d, a, o25, top = markets(g)
     return {"home": home, "away": away, "venue": venue or "neutral",
             "lam": round(lam, 3), "mu": round(mu, 3),
             "p_home": round(h, 4), "p_draw": round(d, 4), "p_away": round(a, 4),
             "over25": round(o25, 4), "external_weight": CFG["external_weight"],
-            "form_weight": CFG["form_weight"],
+            "form_weight": CFG["form_weight"], "live_weight": CFG["live_weight"],
             "top": [{"score": s, "p": round(p, 4)} for p, s in top],
             "grid": [[round(v, 5) for v in row] for row in g]}
 
@@ -432,6 +471,7 @@ def refresh():
         STATE["samples"] = _load_samples(df)
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength(df)
+        STATE["live_strength"], STATE["live_meta"] = _load_live_strength(df)
         if STATE["samples"]:
             probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
                                         bracket, known, CFG["sims"], CFG["sampler"],
@@ -439,7 +479,9 @@ def refresh():
                                         external_strength=STATE["external_strength"],
                                         external_weight=CFG["external_weight"],
                                         form_strength=STATE["form_strength"],
-                                        form_weight=CFG["form_weight"])
+                                        form_weight=CFG["form_weight"],
+                                        live_strength=STATE["live_strength"],
+                                        live_weight=CFG["live_weight"])
             uncertainty = {"mode": "bootstrap-ensemble", "boots": STATE["samples"]["boots"]}
         else:
             sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
@@ -447,7 +489,9 @@ def refresh():
                             external_strength=STATE["external_strength"],
                             external_weight=CFG["external_weight"],
                             form_strength=STATE["form_strength"],
-                            form_weight=CFG["form_weight"])
+                            form_weight=CFG["form_weight"],
+                            live_strength=STATE["live_strength"],
+                            live_weight=CFG["live_weight"])
             probs, paths = run_tournament(sim, bracket, known, CFG["sims"], CFG["sampler"],
                                           return_paths=True)
             uncertainty = {"mode": "point-estimate"}
@@ -463,7 +507,9 @@ def refresh():
                                 external_strength=STATE["external_strength"],
                                 external_weight=CFG["external_weight"],
                                 form_strength=STATE["form_strength"],
-                                form_weight=CFG["form_weight"])
+                                form_weight=CFG["form_weight"],
+                                live_strength=STATE["live_strength"],
+                                live_weight=CFG["live_weight"])
 
         STATE["payload"] = {
             "meta": {**fetch_meta, "trained_matches": len(df),
@@ -474,6 +520,8 @@ def refresh():
                      "friendly_weight": CFG["friendly_weight"], "goal_scale": CFG["goal_scale"],
                      "external_weight": CFG["external_weight"],
                      "form_weight": CFG["form_weight"],
+                     "live_weight": CFG["live_weight"],
+                     "live_context": {**STATE.get("live_meta", {}), "weight": CFG["live_weight"]},
                      "sampler": CFG["sampler"],
                      "uncertainty": uncertainty,
                      "forward_calibration_applied": calibration_applied,
@@ -506,7 +554,8 @@ def refresh():
 def _state_compatible(payload):
     return bool(payload and payload.get("bracket")
                 and all("bronze" in row for row in payload["bracket"])
-                and payload.get("verdict"))
+                and payload.get("verdict")
+                and "live_weight" in payload.get("meta", {}))
 
 
 def _utc_timestamp(value):
@@ -547,6 +596,7 @@ def load_state():
         STATE["params"] = (p["attack"], p["defence"], p["hfa"], p["rho"])
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength()
+        STATE["live_strength"], STATE["live_meta"] = _load_live_strength()
         _attach_external(STATE["payload"])
         return True
     return False
@@ -635,7 +685,9 @@ def api_sample():
                     external_strength=STATE.get("external_strength"),
                     external_weight=CFG["external_weight"],
                     form_strength=STATE.get("form_strength"),
-                    form_weight=CFG["form_weight"])
+                    form_weight=CFG["form_weight"],
+                    live_strength=STATE.get("live_strength"),
+                    live_weight=CFG["live_weight"])
     lam, mu, flat, _ = sim.grid_for(home, away, venue)
     x, y = divmod(int(sim.rng.choice(flat.size, p=flat)), 10)
     res = {"home": home, "away": away, "home_goals": x, "away_goals": y,
@@ -650,7 +702,7 @@ def api_sample():
 
 def _apply_knobs(body):
     changed = {}
-    for k in ("half_life", "friendly_weight", "goal_scale", "external_weight", "form_weight", "sims"):
+    for k in ("half_life", "friendly_weight", "goal_scale", "external_weight", "form_weight", "live_weight", "sims"):
         if k in body:
             lo, hi = KNOB_RANGES[k]
             v = min(max(float(body[k]), lo), hi)
@@ -783,21 +835,27 @@ def api_whatif():
                                     external_strength=STATE.get("external_strength"),
                                     external_weight=CFG["external_weight"],
                                     form_strength=STATE.get("form_strength"),
-                                    form_weight=CFG["form_weight"])
+                                    form_weight=CFG["form_weight"],
+                                    live_strength=STATE.get("live_strength"),
+                                    live_weight=CFG["live_weight"])
     else:
         sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
                         goal_scale=CFG["goal_scale"],
                         external_strength=STATE.get("external_strength"),
                         external_weight=CFG["external_weight"],
                         form_strength=STATE.get("form_strength"),
-                        form_weight=CFG["form_weight"])
+                        form_weight=CFG["form_weight"],
+                        live_strength=STATE.get("live_strength"),
+                        live_weight=CFG["live_weight"])
         probs, paths = run_tournament(sim, bracket, known, sims, sampler, return_paths=True)
     verdict_sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(26), pens=STATE["pens"],
                             goal_scale=CFG["goal_scale"],
                             external_strength=STATE.get("external_strength"),
                             external_weight=CFG["external_weight"],
                             form_strength=STATE.get("form_strength"),
-                            form_weight=CFG["form_weight"])
+                            form_weight=CFG["form_weight"],
+                            live_strength=STATE.get("live_strength"),
+                            live_weight=CFG["live_weight"])
     return jsonify({"overrides": overrides, "counterfactual": counterfactual,
                     "known": known, "sims": sims, "sampler": sampler,
                     "verdict": verdict_bracket(verdict_sim, bracket, known),
@@ -865,12 +923,14 @@ def main():
     ap.add_argument("--sampler", choices=SAMPLERS, default="antithetic")
     ap.add_argument("--external-weight", type=float, default=DEFAULT_EXTERNAL_WEIGHT)
     ap.add_argument("--form-weight", type=float, default=DEFAULT_FORM_WEIGHT)
+    ap.add_argument("--live-weight", type=float, default=DEFAULT_LIVE_WEIGHT)
     ap.add_argument("--auto-refresh-hours", type=float, default=0.25)
     args = ap.parse_args()
     CFG["sims"] = args.sims
     CFG["sampler"] = args.sampler
     CFG["external_weight"] = _clamp(args.external_weight, *KNOB_RANGES["external_weight"])
     CFG["form_weight"] = _clamp(args.form_weight, *KNOB_RANGES["form_weight"])
+    CFG["live_weight"] = _clamp(args.live_weight, *KNOB_RANGES["live_weight"])
 
     loaded = load_state()
     meta = STATE["payload"]["meta"] if loaded else {}
@@ -880,6 +940,7 @@ def main():
             or meta.get("goal_scale") != CFG["goal_scale"]
             or meta.get("external_weight") != CFG["external_weight"]
             or meta.get("form_weight") != CFG["form_weight"]
+            or meta.get("live_weight") != CFG["live_weight"]
             or _state_needs_refresh(meta, max_age_hours=args.auto_refresh_hours)):
         print("refreshing state (scrape + fit + simulate)...")
         refresh()

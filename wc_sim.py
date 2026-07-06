@@ -23,6 +23,8 @@ from scipy.stats import poisson, qmc
 from external_signals import (DEFAULT_EXTERNAL_WEIGHT, apply_external_prior,
                               load_external_strength)
 from form_signals import DEFAULT_FORM_WEIGHT, apply_form_prior, build_recent_form_strength
+from live_signals import DEFAULT_LIVE_WEIGHT, apply_live_prior, build_live_context_strength
+from match_features import load_match_features
 
 ROOT = Path(__file__).parent
 MAX_GOALS = 10  # grid covers scorelines 0-0 .. 9-9 (spec 3.1)
@@ -87,13 +89,15 @@ def team_params(model):
 
 def match_rates(atk, dfn, hfa, team_a, team_b, venue_country, goal_scale=DEFAULT_GOAL_SCALE,
                 external_strength=None, external_weight=0.0,
-                form_strength=None, form_weight=0.0):
+                form_strength=None, form_weight=0.0,
+                live_strength=None, live_weight=0.0):
     """lambda/mu per spec 2.1; home advantage only when a team plays in its own country
     (hosts USA/Mexico/Canada at this WC — team names equal country names in the data)."""
     lam = goal_scale * math.exp(atk[team_a] + dfn[team_b] + (hfa if team_a == venue_country else 0.0))
     mu = goal_scale * math.exp(atk[team_b] + dfn[team_a] + (hfa if team_b == venue_country else 0.0))
     lam, mu = apply_external_prior(lam, mu, team_a, team_b, external_strength, external_weight)
-    return apply_form_prior(lam, mu, team_a, team_b, form_strength, form_weight)
+    lam, mu = apply_form_prior(lam, mu, team_a, team_b, form_strength, form_weight)
+    return apply_live_prior(lam, mu, team_a, team_b, live_strength, live_weight)
 
 
 def dc_grid(lam, mu, rho, n=MAX_GOALS):
@@ -128,7 +132,8 @@ def shootout_rates(shootouts: pd.DataFrame) -> dict:
 class Simulator:
     def __init__(self, atk, dfn, hfa, rho, rng, pens=None, goal_scale=DEFAULT_GOAL_SCALE,
                  external_strength=None, external_weight=0.0,
-                 form_strength=None, form_weight=0.0):
+                 form_strength=None, form_weight=0.0,
+                 live_strength=None, live_weight=0.0):
         self.atk, self.dfn, self.hfa, self.rho, self.rng = atk, dfn, hfa, rho, rng
         self.pens = pens or {}
         self.goal_scale = goal_scale
@@ -136,6 +141,8 @@ class Simulator:
         self.external_weight = external_weight
         self.form_strength = form_strength or {}
         self.form_weight = form_weight
+        self.live_strength = live_strength or {}
+        self.live_weight = live_weight
         self._cache = {}
         self._advance_cache = {}
 
@@ -144,7 +151,8 @@ class Simulator:
         if key not in self._cache:
             lam, mu = match_rates(self.atk, self.dfn, self.hfa, a, b, venue, self.goal_scale,
                                   self.external_strength, self.external_weight,
-                                  self.form_strength, self.form_weight)
+                                  self.form_strength, self.form_weight,
+                                  self.live_strength, self.live_weight)
             g = dc_grid(lam, mu, self.rho)
             self._cache[key] = (lam, mu, g.ravel(), g)
         return self._cache[key]
@@ -312,7 +320,8 @@ def run_tournament(sim, bracket, known, n_sims, sampler="antithetic", return_pat
 
 def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antithetic",
                  seed=None, goal_scale=DEFAULT_GOAL_SCALE, external_strength=None,
-                 external_weight=0.0, form_strength=None, form_weight=0.0):
+                 external_weight=0.0, form_strength=None, form_weight=0.0,
+                 live_strength=None, live_weight=0.0):
     """Mixture over bootstrap parameter samples (uncertainty.py): each sample simulates
     an equal share of paths, propagating estimation uncertainty into the bracket."""
     B = len(param_samples)
@@ -325,7 +334,8 @@ def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antitheti
         sim = Simulator(ps["attack"], ps["defence"], ps["hfa"], ps["rho"], rng,
                         pens=pens, goal_scale=goal_scale,
                         external_strength=external_strength, external_weight=external_weight,
-                        form_strength=form_strength, form_weight=form_weight)
+                        form_strength=form_strength, form_weight=form_weight,
+                        live_strength=live_strength, live_weight=live_weight)
         probs, paths = run_tournament(sim, bracket, known, n, sampler, return_paths=True)
         teams = paths["teams"]
         if all_winners is None:
@@ -412,6 +422,8 @@ def main():
                     help="capped player/market prior weight (0 disables)")
     ap.add_argument("--form-weight", type=float, default=DEFAULT_FORM_WEIGHT,
                     help="capped opponent-adjusted recent-form prior weight")
+    ap.add_argument("--live-weight", type=float, default=DEFAULT_LIVE_WEIGHT,
+                    help="capped current-tournament xG/stat momentum prior weight")
     ap.add_argument("--years", type=float, default=4.0, help="training window, years")
     ap.add_argument("--seed", type=int, default=26)
     args = ap.parse_args()
@@ -435,11 +447,16 @@ def main():
     form_strength, form_meta = build_recent_form_strength(df, external_strength=external_strength)
     if args.form_weight and form_strength:
         print(f"recent-form prior: {form_meta['rows']} teams, weight {args.form_weight:.3f}")
+    live_strength, live_meta = build_live_context_strength(
+        df, features=load_match_features(ROOT), external_strength=external_strength)
+    if args.live_weight and live_strength:
+        print(f"live context prior: {live_meta['rows']} teams, weight {args.live_weight:.3f}")
 
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(args.seed),
                     pens=shootout_rates(shootouts), goal_scale=args.goal_scale,
                     external_strength=external_strength, external_weight=args.external_weight,
-                    form_strength=form_strength, form_weight=args.form_weight)
+                    form_strength=form_strength, form_weight=args.form_weight,
+                    live_strength=live_strength, live_weight=args.live_weight)
     print_match_cards(sim, bracket, known)
 
     probs = run_tournament(sim, bracket, known, args.sims, args.sampler)
