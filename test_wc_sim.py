@@ -289,6 +289,46 @@ def test_espn_topup_fills_pending_fixture_instead_of_duplicating():
     assert row["home_score"] == 2 and row["away_score"] == 3
 
 
+def test_espn_topup_polls_same_day_after_first_result():
+    import io
+    import json
+    import fetch_data
+    matches = pd.DataFrame([
+        {"date": pd.Timestamp("2026-07-06"), "home_team": "A", "away_team": "B",
+         "home_score": 1.0, "away_score": 0.0, "tournament": "FIFA World Cup",
+         "city": "X", "country": "Y", "neutral": True},
+        {"date": pd.Timestamp("2026-07-06"), "home_team": "C", "away_team": "D",
+         "home_score": np.nan, "away_score": np.nan, "tournament": "FIFA World Cup",
+         "city": "X", "country": "Y", "neutral": True},
+    ])
+    event = {"date": "2026-07-06T22:00Z", "status": {"type": {"name": "STATUS_FULL_TIME"}},
+             "competitions": [{"venue": {"address": {"city": "X", "country": "Y"}},
+                               "competitors": [
+                                   {"homeAway": "home", "score": "2", "team": {"displayName": "C"}},
+                                   {"homeAway": "away", "score": "1", "team": {"displayName": "D"}},
+                               ]}]}
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    old = fetch_data.urllib.request.urlopen
+    calls = []
+    try:
+        def fake_open(url, timeout=30):
+            calls.append(url)
+            return Response(json.dumps({"events": [event]}).encode())
+        fetch_data.urllib.request.urlopen = fake_open
+        out, _, n = fetch_data.espn_topup(matches, pd.DataFrame(), today="2026-07-06")
+        row = out[out["home_team"].eq("C")].iloc[0]
+        assert calls and n == 1
+        assert row["home_score"] == 2 and row["away_score"] == 1
+    finally:
+        fetch_data.urllib.request.urlopen = old
+
+
 def test_server_applies_forward_calibration_once():
     import json
     import server

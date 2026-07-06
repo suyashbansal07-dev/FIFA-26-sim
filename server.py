@@ -1,6 +1,6 @@
 """Flask app: web UI + prediction API + refresh pipeline for the WC-2026 sim.
 
-Run: .venv/Scripts/python server.py [--port 8026] [--sims 1000000] [--auto-refresh-hours 6]
+Run: .venv/Scripts/python server.py [--port 8026] [--sims 1000000] [--auto-refresh-hours 0.25]
 
 Endpoints:
   GET  /               web/index.html
@@ -843,7 +843,7 @@ def main():
     ap.add_argument("--sampler", choices=SAMPLERS, default="antithetic")
     ap.add_argument("--external-weight", type=float, default=DEFAULT_EXTERNAL_WEIGHT)
     ap.add_argument("--form-weight", type=float, default=DEFAULT_FORM_WEIGHT)
-    ap.add_argument("--auto-refresh-hours", type=float, default=6.0)
+    ap.add_argument("--auto-refresh-hours", type=float, default=0.25)
     args = ap.parse_args()
     CFG["sims"] = args.sims
     CFG["sampler"] = args.sampler

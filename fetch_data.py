@@ -30,7 +30,7 @@ def espn_topup(matches, shootouts, events=None, today=None):
     played = matches.dropna(subset=["home_score"])
     newest = played["date"].max()
     today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.today().normalize()
-    if newest >= today and events is None:
+    if newest > today and events is None:
         return matches, shootouts, 0
 
     if events is None:
