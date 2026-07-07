@@ -50,8 +50,7 @@ def espn_topup(matches, shootouts, events=None, today=None):
     new_rows, new_pens = [], []
     consumed = 0
     for ev in events:
-        if ev["status"]["type"]["name"] not in COMPLETE:
-            continue
+        status = ev["status"]["type"]["name"]
         comp = ev["competitions"][0]
         sides = {c["homeAway"]: c for c in comp["competitors"]}
         h, a = _team(sides["home"]["team"]["displayName"]), _team(sides["away"]["team"]["displayName"])
@@ -60,13 +59,20 @@ def espn_topup(matches, shootouts, events=None, today=None):
             continue
         addr = comp.get("venue", {}).get("address", {})
         country = COUNTRY_ALIASES.get(addr.get("country", ""), addr.get("country", ""))
-        row = {
+        base = {
             "date": date, "home_team": h, "away_team": a,
-            "home_score": int(sides["home"]["score"]), "away_score": int(sides["away"]["score"]),
             "tournament": "FIFA World Cup", "city": addr.get("city", ""), "country": country,
             "neutral": h != country,
         }
         pending = pair_rows(recent[recent["home_score"].isna()], h, a, date)
+        if status not in COMPLETE:
+            if not pending.empty:
+                i = pending.index[-1]
+                for k, v in base.items():
+                    matches.loc[i, k] = v
+            continue
+        row = {**base, "home_score": int(sides["home"]["score"]),
+               "away_score": int(sides["away"]["score"])}
         if not pending.empty:
             i = pending.index[-1]
             for k, v in row.items():
@@ -74,7 +80,7 @@ def espn_topup(matches, shootouts, events=None, today=None):
             consumed += 1
         else:
             new_rows.append(row)
-        if ev["status"]["type"]["name"] == "STATUS_FINAL_PEN":
+        if status == "STATUS_FINAL_PEN":
             winner = next(_team(c["team"]["displayName"]) for c in comp["competitors"] if c.get("winner"))
             new_pens.append({"date": date, "home_team": h, "away_team": a,
                              "winner": winner, "first_shooter": ""})

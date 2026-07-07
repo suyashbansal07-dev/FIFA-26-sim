@@ -7,8 +7,8 @@
     {"id": "R16-4", "home": "Mexico", "away": "England", "venue_country": "Mexico", "date": "2026-07-05"},
     {"id": "R16-5", "home": "Portugal", "away": "Spain", "venue_country": "United States", "date": "2026-07-06"},
     {"id": "R16-6", "home": "United States", "away": "Belgium", "venue_country": "United States", "date": "2026-07-06"},
-    {"id": "R16-7", "home": "Argentina", "away": "Egypt", "venue_country": "United States", "date": "2026-07-06"},
-    {"id": "R16-8", "home": "Switzerland", "away": "Colombia", "venue_country": "Canada", "date": "2026-07-06"}
+    {"id": "R16-7", "home": "Argentina", "away": "Egypt", "venue_country": "United States", "date": "2026-07-07"},
+    {"id": "R16-8", "home": "Switzerland", "away": "Colombia", "venue_country": "Canada", "date": "2026-07-07"}
   ],
   "qf": [
     {"id": "QF-1", "from": ["R16-1", "R16-2"], "venue_country": "United States", "date": "2026-07-09"},

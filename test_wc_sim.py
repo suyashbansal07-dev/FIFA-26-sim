@@ -428,6 +428,30 @@ def test_espn_topup_fills_pending_fixture_instead_of_duplicating():
     assert row["home_score"] == 2 and row["away_score"] == 3
 
 
+def test_espn_topup_updates_pending_schedule_without_result():
+    from fetch_data import espn_topup
+    matches = pd.DataFrame([
+        {"date": pd.Timestamp("2026-07-06"), "home_team": "Argentina", "away_team": "Egypt",
+         "home_score": np.nan, "away_score": np.nan, "tournament": "FIFA World Cup",
+         "city": "", "country": "United States", "neutral": True},
+        {"date": pd.Timestamp("2026-07-06"), "home_team": "Portugal", "away_team": "Spain",
+         "home_score": 0.0, "away_score": 1.0, "tournament": "FIFA World Cup",
+         "city": "X", "country": "United States", "neutral": True},
+    ])
+    event = {"date": "2026-07-07T16:00Z", "status": {"type": {"name": "STATUS_SCHEDULED"}},
+             "competitions": [{"venue": {"address": {"city": "East Rutherford", "country": "United States"}},
+                               "competitors": [
+                                   {"homeAway": "home", "score": "0", "team": {"displayName": "Argentina"}},
+                                   {"homeAway": "away", "score": "0", "team": {"displayName": "Egypt"}},
+                               ]}]}
+    out, _, n = espn_topup(matches, pd.DataFrame(), events=[event], today="2026-07-07")
+    row = out[out["home_team"].eq("Argentina") & out["away_team"].eq("Egypt")].iloc[0]
+    assert n == 0
+    assert pd.Timestamp(row["date"]).date().isoformat() == "2026-07-07"
+    assert pd.isna(row["home_score"]) and pd.isna(row["away_score"])
+    assert row["city"] == "East Rutherford"
+
+
 def test_espn_topup_polls_same_day_after_first_result():
     import io
     import json
