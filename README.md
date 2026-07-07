@@ -157,7 +157,7 @@ flowchart LR
 | Ratings | Team attack, defence, home advantage, rho | compact, proven football scoring model |
 | Time decay | Exponential, default half-life 1100 days | recent signal without starving the fit |
 | Goal scale | Default 1.10 | reduces low-score overconservatism |
-| External prior | Rank, market value, squad depth, chemistry, caps/goals, WC usage | richer team-strength signal |
+| External prior | Rank, market value, squad depth, chemistry, caps/goals, active star usage, WC usage | richer team-strength signal |
 | Form prior | Opponent-adjusted recent form/xG, default weight 0.00 | wired but disabled by default after OOS sweep |
 | Live context prior | Current-WC result residuals, xG, and shot pressure, default weight 0.03 | momentum without hard-coded teams |
 | Knockout ties | 30-minute Poisson extra time + Beta(5,5)-shrunk shootout rates | better than a coin flip |

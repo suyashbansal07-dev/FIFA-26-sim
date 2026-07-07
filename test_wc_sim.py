@@ -138,6 +138,27 @@ def test_external_strength_uses_current_wc_usage_availability_when_enabled():
     assert offline["Used"] == offline["Benched"]
 
 
+def test_external_strength_boosts_active_top_market_star_only_when_usage_enabled():
+    from external_signals import build_external_strength
+    common = {"top11_market_value": 400_000_000, "top23_market_value": 650_000_000,
+              "fifa_ranking": 12, "squad_caps": 700, "squad_goals": 100,
+              "chemistry_score": 0.7, "position_balance": 0.8, "same_club_share": 0.1,
+              "top1_market_value": 180_000_000, "top3_market_value": 280_000_000,
+              "top_attacker_market_value": 180_000_000,
+              "fiwc_impact_score": 150, "fiwc_top_impact_score": 70,
+              "fiwc_top11_usage_share": 0.55}
+    rows = pd.DataFrame([
+        {"team": "ActiveStar", **common, "fiwc_top_market_usage_share": 0.95,
+         "fiwc_top_market_impact_score": 400},
+        {"team": "QuietStar", **common, "fiwc_top_market_usage_share": 0.15,
+         "fiwc_top_market_impact_score": 5},
+    ])
+    live = build_external_strength(rows, use_fiwc_impact=True)
+    offline = build_external_strength(rows, use_fiwc_impact=False)
+    assert live["ActiveStar"] > live["QuietStar"]
+    assert offline["ActiveStar"] == offline["QuietStar"]
+
+
 def test_fifa_live_ranking_rows_are_canonicalized():
     from fifa_rankings import rows_from_payload
     payload = {"Results": [

@@ -500,6 +500,18 @@ Decision: do not create a missing-starter model prior yet. There are no FIWC
 lineup rows to validate or apply it. Current usage is useful context, but
 starter-specific adjustments would be fake precision.
 
+## Active-star x-factor guard (2026-07-07)
+
+User concern: market-only top-player labels can over-credit expensive players
+who are not currently starting or producing, while active stars such as Haaland
+should be visible in the model without team-specific exceptions.
+
+Decision: keep the static market-star component, but reduce its weight inside
+the live external prior and add an active-star component from
+`fiwc_top_market_usage_share` and `fiwc_top_market_impact_score`. Missing usage
+stays neutral. The change rewards used/scoring stars and reduces the live edge
+from quiet/benched market stars without hard-coding player names.
+
 ## Backlog Closure (2026-07-06)
 
 - Market anchor built (`market_anchor.py`, `/api/market`, UI section): de-vigs
