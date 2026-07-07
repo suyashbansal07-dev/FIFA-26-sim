@@ -12,6 +12,7 @@ Endpoints:
 """
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import threading
@@ -63,6 +64,14 @@ KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
                "goal_scale": (0.8, 1.3), "external_weight": (0.0, 0.15),
                "form_weight": (0.0, 0.08), "live_weight": (0.0, 0.06),
                "sims": (10_000, DEFAULT_SIMS)}
+
+
+def _availability_signature(path=None):
+    path = Path(path or AVAILABILITY_FILE)
+    if not path.exists():
+        return {"present": False}
+    raw = path.read_bytes()
+    return {"present": True, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
 def _clean(v):
@@ -578,6 +587,7 @@ def refresh():
                      "sampler": CFG["sampler"],
                      "uncertainty": uncertainty,
                      "forward_calibration_applied": calibration_applied,
+                     "availability_input": _availability_signature(),
                      "freshness": _freshness_meta(fetch_meta, bracket, known),
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "fixtures": fixtures,
@@ -615,6 +625,8 @@ def _utc_timestamp(value):
 
 def _state_needs_refresh(meta, today=None, max_age_hours=None):
     if not meta.get("generated"):
+        return True
+    if meta.get("availability_input") != _availability_signature():
         return True
     now = _utc_timestamp(today) if today is not None else pd.Timestamp.now(tz="UTC")
     generated = _utc_timestamp(meta["generated"])

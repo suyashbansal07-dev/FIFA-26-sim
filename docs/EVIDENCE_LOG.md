@@ -512,6 +512,17 @@ the live external prior and add an active-star component from
 stays neutral. The change rewards used/scoring stars and reduces the live edge
 from quiet/benched market stars without hard-coding player names.
 
+## Availability cache invalidation (2026-07-07)
+
+User concern: late injuries/suspensions matter, but automatic lineup feeds are
+not reliable enough for unvalidated missing-starter adjustments.
+
+Decision: keep the manual `data/availability.json` layer, but make it part of
+the state cache key. `server.py` now stores a SHA-256 fingerprint of the
+availability file in `meta.availability_input`; startup refreshes the bracket
+when that file changes, so manual injury/suspension updates cannot silently
+decorate stale odds.
+
 ## Backlog Closure (2026-07-06)
 
 - Market anchor built (`market_anchor.py`, `/api/market`, UI section): de-vigs

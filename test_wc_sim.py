@@ -765,15 +765,18 @@ def test_case_pre_match_live_prior_excludes_current_match():
 
 def test_state_refresh_and_freshness_detect_new_day_staleness():
     import server
+    sig = server._availability_signature()
     assert server._state_needs_refresh(
-        {"generated": "2026-07-05T08:00:00+00:00"}, today="2026-07-06")
+        {"generated": "2026-07-05T08:00:00+00:00", "availability_input": sig},
+        today="2026-07-06")
     assert not server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00"}, today="2026-07-06")
+        {"generated": "2026-07-06T01:00:00+00:00", "availability_input": sig},
+        today="2026-07-06")
     assert server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00"},
+        {"generated": "2026-07-06T01:00:00+00:00", "availability_input": sig},
         today="2026-07-06T01:16:00+00:00", max_age_hours=0.25)
     assert not server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00"},
+        {"generated": "2026-07-06T01:00:00+00:00", "availability_input": sig},
         today="2026-07-06T01:14:00+00:00", max_age_hours=0.25)
     bracket = {
         "r16": [{"id": "R16-1", "home": "A", "away": "B",
@@ -783,6 +786,26 @@ def test_state_refresh_and_freshness_detect_new_day_staleness():
     f = server._freshness_meta({"newest_result": "2026-07-04"}, bracket, {}, today="2026-07-06")
     assert f["stale"] and f["overdue_unplayed_slots"] == ["R16-1"]
     assert f["result_lag_days"] == 2
+
+
+def test_state_refresh_detects_availability_file_change():
+    import server
+    import json as _json
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory() as d:
+        old_file = server.AVAILABILITY_FILE
+        path = Path(d) / "availability.json"
+        try:
+            server.AVAILABILITY_FILE = path
+            meta = {"generated": "2026-07-06T01:00:00+00:00",
+                    "availability_input": server._availability_signature()}
+            assert not server._state_needs_refresh(meta, today="2026-07-06")
+            path.write_text(_json.dumps({"France": [{"player": "X", "value_share": 0.1}]}))
+            assert server._state_needs_refresh(meta, today="2026-07-06")
+            meta["availability_input"] = server._availability_signature()
+            assert not server._state_needs_refresh(meta, today="2026-07-06")
+        finally:
+            server.AVAILABILITY_FILE = old_file
 
 
 def test_forward_safe_context_uses_only_prior_matches():
