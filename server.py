@@ -51,6 +51,10 @@ SHOOTOUTS_FILE = ROOT / "data" / "shootouts.csv"
 FORWARD_LEDGER = ROOT / "output" / "forward_forecasts.jsonl"
 FORWARD_CALIBRATION = ROOT / "output" / "forward_calibration.json"
 FORWARD_CALIBRATION_APPLIED = ROOT / "output" / "forward_calibration_applied.json"
+MODEL_CODE_FILES = (
+    "wc_sim.py", "external_signals.py", "form_signals.py", "live_signals.py",
+    "availability.py", "match_features.py",
+)
 app = Flask(__name__, static_folder="web", static_url_path="")
 STATE = {"payload": None, "params": None, "pens": {}, "samples": None,
          "external_strength": {}, "external_meta": {},
@@ -90,6 +94,10 @@ def _model_input_signature():
         "external": _file_signature(EXTERNAL_DIR / "project_team_enrichment.csv"),
         "availability": _availability_signature(),
         "samples": _file_signature(SAMPLES_FILE),
+        "code": {
+            str(name): _file_signature(Path(name) if Path(name).is_absolute() else ROOT / name)
+            for name in MODEL_CODE_FILES
+        },
     }
 
 

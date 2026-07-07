@@ -850,6 +850,24 @@ def test_state_refresh_detects_model_input_file_change():
             server.AVAILABILITY_FILE = old_file
 
 
+def test_state_refresh_detects_model_code_change():
+    import server
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory() as d:
+        old_files = server.MODEL_CODE_FILES
+        path = Path(d) / "live_signals.py"
+        try:
+            path.write_text("v1")
+            server.MODEL_CODE_FILES = (path,)
+            meta = {"generated": "2026-07-06T01:00:00+00:00",
+                    "model_input_signature": server._model_input_signature()}
+            assert not server._state_needs_refresh(meta, today="2026-07-06")
+            path.write_text("v2")
+            assert server._state_needs_refresh(meta, today="2026-07-06")
+        finally:
+            server.MODEL_CODE_FILES = old_files
+
+
 def test_forward_safe_context_uses_only_prior_matches():
     from feature_context import add_forward_safe_context
     rows = pd.DataFrame({

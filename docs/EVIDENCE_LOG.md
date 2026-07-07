@@ -539,6 +539,12 @@ strength still uses result residuals, xG, and stat pressure, then shrinks each
 team's live z-score by completed-match confidence up to three matches. One-match
 signals now move odds directionally without receiving full live-context weight.
 
+Follow-up: restart proof exposed that cached state could survive Python model
+logic changes because only data files were fingerprinted. `meta.model_input_signature`
+now includes the core model code files too, so edits to the simulator, external
+priors, form/live priors, availability, or match-feature parser force a refresh
+before odds are treated as current.
+
 ## Scoreline dispersion repair (2026-07-07)
 
 User concern: exact-score cards were too concentrated around 0-0, 1-0, 0-1,
