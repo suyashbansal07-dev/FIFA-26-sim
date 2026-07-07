@@ -143,6 +143,7 @@
 
 <section>
   <h2>Championship odds</h2>
+  <p id="predictionLine" class="plate" hidden></p>
   <table id="bracketTbl"></table>
   <p class="mut" style="margin:10px 0 4px">Most frequent complete finishes (joint mode):</p>
   <table id="pathsTbl" style="max-width:560px"></table>
@@ -282,7 +283,7 @@ function renderChart(consensus) {
      <div class="round">${slotNode(f.id, 'Final · Jul 19', f.from)}</div>`;
   $('consensusLine').hidden = !consensus;
   if (consensus) {
-    $('consensusLine').innerHTML = `🏆 Consensus champion: <b>${consensus.modal_champion.team}</b>
+    $('consensusLine').innerHTML = `Monte Carlo path champion: <b>${consensus.modal_champion.team}</b>
       <span class="mut">(${pct(consensus.modal_champion.p)} of ${consensus.sims.toLocaleString()} sims ·
       full-path joint support ${(100 * consensus.consensus_path.joint_support).toFixed(3)}% ·
       green picks show slot probability; hover for path-conditional support)</span>`;
@@ -346,7 +347,7 @@ function setCounterfactualMode() {
 }
 
 /* ---------- odds + paths ---------- */
-let CURRENT = { bracket: null, consensus: null };
+let CURRENT = { bracket: null, consensus: null, prediction: null };
 function championDeltas(bracket, whatif) {
   // trend vs the previous refresh (localStorage); frozen during what-if views
   let prev = {};
@@ -366,8 +367,26 @@ function championDeltas(bracket, whatif) {
   return deltas;
 }
 
-function renderOdds(bracket, consensus, whatif, counterfactual=false) {
-  CURRENT = { bracket, consensus };
+function renderPrediction(prediction, whatif=false) {
+  $('predictionLine').hidden = !prediction;
+  if (!prediction) return;
+  const pick = prediction.definitive_champion || 'n/a';
+  const support = prediction.definitive_support == null ? '' :
+    ` (${pct(prediction.definitive_support)} final support)`;
+  const mc = prediction.monte_carlo_favorite || 'n/a';
+  const mcProb = prediction.monte_carlo_champion_probability == null ? '' :
+    ` ${pct(prediction.monte_carlo_champion_probability)} title odds`;
+  const note = prediction.champion_disagreement
+    ? 'forced-pick bracket and full-path title odds disagree'
+    : 'forced-pick bracket and full-path title odds agree';
+  $('predictionLine').innerHTML =
+    `${whatif ? 'What-if' : 'Definitive'} bracket champion: <b>${pick}</b>${support}` +
+    `<span class="mut"> - Monte Carlo favorite: ${mc}${mcProb} - ${note}</span>`;
+}
+
+function renderOdds(bracket, consensus, prediction, whatif, counterfactual=false) {
+  CURRENT = { bracket, consensus, prediction };
+  renderPrediction(prediction, whatif);
   const deltas = whatif ? {} : championDeltas(bracket, whatif);
   const hasBronze = bracket.some(r => r.bronze != null);
   const rows = bracket.map(r =>
@@ -623,7 +642,7 @@ async function doWhatif(updateUrl=true) {
                                                               sampler: $('knobSampler').value,
                                                               counterfactual: $('counterfactualMode').checked }) });
     if (updateUrl) updateShareUrl(r.counterfactual);
-    renderOdds(r.bracket, r.consensus, true, r.counterfactual);
+    renderOdds(r.bracket, r.consensus, r.prediction, true, r.counterfactual);
     renderStaticBracket(r.verdict, true);
   } catch (e) { alert(e.message); }
 }
@@ -633,7 +652,7 @@ function resetWhatif() {
   $('counterfactualMode').checked = false;
   syncPinButton();
   updateShareUrl(false);
-  renderOdds(DATA.bracket, DATA.consensus, false);
+  renderOdds(DATA.bracket, DATA.consensus, DATA.prediction, false);
   renderStaticBracket(DATA.verdict, false);
 }
 
@@ -681,7 +700,7 @@ async function loadBacktest() {
 async function load() {
   DATA = await j('/api/data');
   renderMeta();
-  renderOdds(DATA.bracket, DATA.consensus, false);
+  renderOdds(DATA.bracket, DATA.consensus, DATA.prediction, false);
   renderStaticBracket(DATA.verdict, false);
   renderRatings();
   renderExternal();

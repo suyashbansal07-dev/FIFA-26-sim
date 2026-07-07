@@ -676,6 +676,19 @@ def test_load_state_rejects_stale_no_bronze_payload():
             server.STATE.update(old_state)
 
 
+def test_prediction_summary_separates_forced_pick_from_mc_favorite():
+    import server
+    verdict = {"champion": "Argentina", "champion_match_support": 0.51234}
+    bracket = [{"team": "Spain", "champion": 0.2659},
+               {"team": "Argentina", "champion": 0.2365}]
+    summary = server._prediction_summary(verdict, bracket)
+    assert summary["definitive_champion"] == "Argentina"
+    assert summary["definitive_support"] == 0.5123
+    assert summary["monte_carlo_favorite"] == "Spain"
+    assert summary["monte_carlo_champion_probability"] == 0.2659
+    assert summary["champion_disagreement"]
+
+
 def test_case_pre_match_form_prior_excludes_current_match():
     import server
     old_weight = server.CFG["form_weight"]

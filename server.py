@@ -475,6 +475,36 @@ def _load_samples(df):
     return None
 
 
+def _bracket_rows(probs):
+    return sorted(
+        ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
+          "final": round(p[2], 4), "champion": round(p[3], 4),
+          "bronze": round(p[4], 4)}
+         for t, p in probs.items()), key=lambda r: -r["champion"])
+
+
+def _prediction_summary(verdict, bracket_rows):
+    top = bracket_rows[0] if bracket_rows else {}
+    support = (verdict or {}).get("champion_match_support")
+    definitive = (verdict or {}).get("champion")
+    favorite = top.get("team")
+    return {
+        "definitive_champion": definitive,
+        "definitive_basis": "forced_pick_per_match_advance_probability",
+        "definitive_support": round(support, 4) if isinstance(support, (int, float)) else support,
+        "monte_carlo_favorite": favorite,
+        "monte_carlo_basis": "all_path_title_probability",
+        "monte_carlo_champion_probability": top.get("champion"),
+        "champion_disagreement": bool(definitive and favorite and definitive != favorite),
+    }
+
+
+def _attach_prediction(payload):
+    if payload:
+        payload["prediction"] = _prediction_summary(payload.get("verdict"), payload.get("bracket", []))
+    return payload
+
+
 def refresh():
     """Scrape -> refit -> re-simulate -> rebuild payload. Serialized by LOCK."""
     with LOCK:
@@ -531,6 +561,8 @@ def refresh():
                                 form_weight=CFG["form_weight"],
                                 live_strength=STATE["live_strength"],
                                 live_weight=CFG["live_weight"])
+        bracket_rows = _bracket_rows(probs)
+        verdict = verdict_bracket(verdict_sim, bracket, known)
 
         STATE["payload"] = {
             "meta": {**fetch_meta, "trained_matches": len(df),
@@ -551,12 +583,9 @@ def refresh():
             "fixtures": fixtures,
             "tree": {k: bracket[k] for k in ("qf", "sf", "final")},
             "known": known,
-            "verdict": verdict_bracket(verdict_sim, bracket, known),
-            "bracket": sorted(
-                ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
-                  "final": round(p[2], 4), "champion": round(p[3], 4),
-                  "bronze": round(p[4], 4)}
-                 for t, p in probs.items()), key=lambda r: -r["champion"]),
+            "verdict": verdict,
+            "bracket": bracket_rows,
+            "prediction": _prediction_summary(verdict, bracket_rows),
             "teams": sorted(atk),
             "ratings": sorted(
                 ({"team": t, "attack": round(atk[t], 3), "defence": round(dfn[t], 3)}
@@ -620,6 +649,7 @@ def load_state():
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength()
         STATE["live_strength"], STATE["live_meta"] = _load_live_strength()
         _attach_external(STATE["payload"])
+        _attach_prediction(STATE["payload"])
         return True
     return False
 
@@ -658,7 +688,7 @@ def favicon():
 
 @app.get("/api/data")
 def api_data():
-    return jsonify(_attach_external(STATE["payload"]))
+    return jsonify(_attach_prediction(_attach_external(STATE["payload"])))
 
 
 @app.get("/api/external")
@@ -884,15 +914,14 @@ def api_whatif():
                             form_weight=CFG["form_weight"],
                             live_strength=STATE.get("live_strength"),
                             live_weight=CFG["live_weight"])
+    bracket_rows = _bracket_rows(probs)
+    verdict = verdict_bracket(verdict_sim, bracket, known)
     return jsonify({"overrides": overrides, "counterfactual": counterfactual,
                     "known": known, "sims": sims, "sampler": sampler,
-                    "verdict": verdict_bracket(verdict_sim, bracket, known),
+                    "verdict": verdict,
+                    "prediction": _prediction_summary(verdict, bracket_rows),
                     "consensus": build_consensus(paths, bracket, known),
-                    "bracket": sorted(
-        ({"team": t, "qf": round(p[0], 4), "sf": round(p[1], 4),
-          "final": round(p[2], 4), "champion": round(p[3], 4),
-          "bronze": round(p[4], 4)}
-         for t, p in probs.items()), key=lambda r: -r["champion"])})
+                    "bracket": bracket_rows})
 
 
 @app.get("/api/market")
