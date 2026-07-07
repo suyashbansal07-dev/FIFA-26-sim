@@ -47,6 +47,7 @@ AVAILABILITY_FILE = ROOT / "data" / "availability.json"
 EXTERNAL_DIR = ROOT / "output" / "external"
 MATCHES_FILE = ROOT / "data" / "matches.csv"
 FEATURES_FILE = ROOT / "data" / "match_features.csv"
+SHOOTOUTS_FILE = ROOT / "data" / "shootouts.csv"
 FORWARD_LEDGER = ROOT / "output" / "forward_forecasts.jsonl"
 FORWARD_CALIBRATION = ROOT / "output" / "forward_calibration.json"
 FORWARD_CALIBRATION_APPLIED = ROOT / "output" / "forward_calibration_applied.json"
@@ -69,12 +70,27 @@ KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
                "sims": (10_000, DEFAULT_SIMS)}
 
 
-def _availability_signature(path=None):
-    path = Path(path or AVAILABILITY_FILE)
+def _file_signature(path):
+    path = Path(path)
     if not path.exists():
         return {"present": False}
     raw = path.read_bytes()
     return {"present": True, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def _availability_signature(path=None):
+    return _file_signature(path or AVAILABILITY_FILE)
+
+
+def _model_input_signature():
+    return {
+        "matches": _file_signature(MATCHES_FILE),
+        "shootouts": _file_signature(SHOOTOUTS_FILE),
+        "features": _file_signature(FEATURES_FILE),
+        "external": _file_signature(EXTERNAL_DIR / "project_team_enrichment.csv"),
+        "availability": _availability_signature(),
+        "samples": _file_signature(SAMPLES_FILE),
+    }
 
 
 def _clean(v):
@@ -527,7 +543,7 @@ def refresh():
         STATE["params"] = (atk, dfn, hfa, rho)
 
         bracket = json.loads((ROOT / "bracket_2026.json").read_text())
-        shootouts = pd.read_csv(ROOT / "data" / "shootouts.csv", parse_dates=["date"])
+        shootouts = pd.read_csv(SHOOTOUTS_FILE, parse_dates=["date"])
         STATE["pens"] = shootout_rates(shootouts)
         known = known_winners(bracket, df, shootouts)
         STATE["samples"] = _load_samples(df)
@@ -595,6 +611,7 @@ def refresh():
                      "uncertainty": uncertainty,
                      "forward_calibration_applied": calibration_applied,
                      "availability_input": _availability_signature(),
+                     "model_input_signature": _model_input_signature(),
                      "freshness": _freshness_meta(fetch_meta, bracket, known),
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "fixtures": fixtures,
@@ -634,7 +651,7 @@ def _utc_timestamp(value):
 def _state_needs_refresh(meta, today=None, max_age_hours=None):
     if not meta.get("generated"):
         return True
-    if meta.get("availability_input") != _availability_signature():
+    if meta.get("model_input_signature") != _model_input_signature():
         return True
     now = _utc_timestamp(today) if today is not None else pd.Timestamp.now(tz="UTC")
     generated = _utc_timestamp(meta["generated"])
@@ -664,10 +681,12 @@ def load_state():
         STATE["pens"] = s.get("pens", {})
         p = s["params"]
         STATE["params"] = (p["attack"], p["defence"], p["hfa"], p["rho"])
+        df = load_matches(CFG["years"])
+        STATE["samples"] = _load_samples(df)
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
         STATE["external_strength"], STATE["availability_meta"] = apply_availability(STATE["external_strength"], AVAILABILITY_FILE)
-        STATE["form_strength"], STATE["form_meta"] = _load_form_strength()
-        STATE["live_strength"], STATE["live_meta"] = _load_live_strength()
+        STATE["form_strength"], STATE["form_meta"] = _load_form_strength(df)
+        STATE["live_strength"], STATE["live_meta"] = _load_live_strength(df)
         _attach_external(STATE["payload"])
         _attach_prediction(STATE["payload"])
         return True

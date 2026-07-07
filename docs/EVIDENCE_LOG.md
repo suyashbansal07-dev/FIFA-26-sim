@@ -523,6 +523,14 @@ availability file in `meta.availability_input`; startup refreshes the bracket
 when that file changes, so manual injury/suspension updates cannot silently
 decorate stale odds.
 
+Update: generalized the cache key into `meta.model_input_signature`. The server
+now fingerprints `matches.csv`, `shootouts.csv`, `match_features.csv`,
+`project_team_enrichment.csv`, `availability.json`, and `param_samples.json`.
+Any changed model input forces startup refresh before odds are treated as
+current. `load_state()` also reloads matching bootstrap samples, so what-if
+simulations keep ensemble uncertainty after restart instead of falling back to
+a point estimate.
+
 ## Scoreline dispersion repair (2026-07-07)
 
 User concern: exact-score cards were too concentrated around 0-0, 1-0, 0-1,

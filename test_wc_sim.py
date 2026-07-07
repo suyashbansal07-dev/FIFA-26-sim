@@ -654,18 +654,29 @@ def test_load_state_attaches_external_strength_after_reload():
     with TemporaryDirectory() as d:
         root = Path(d)
         old_state_file, old_external_dir = server.STATE_FILE, server.EXTERNAL_DIR
+        old_samples_file, old_load_matches = server.SAMPLES_FILE, server.load_matches
         old_form_loader = server._load_form_strength
         old_live_loader = server._load_live_strength
         old_state = {k: v for k, v in server.STATE.items()}
         server.STATE_FILE = root / "state.json"
+        server.SAMPLES_FILE = root / "param_samples.json"
         server.EXTERNAL_DIR = root / "external"
         server.EXTERNAL_DIR.mkdir()
         try:
+            server.load_matches = lambda years: pd.DataFrame({"date": pd.to_datetime(["2026-07-06"])})
             pd.DataFrame([{"team": "Canada", "fifa_ranking": 16,
                            "top23_market_value": 199500000, "squad_caps": 1184,
                            "squad_goals": 158, "chemistry_score": 0.7}]).to_csv(
                 server.EXTERNAL_DIR / "project_team_enrichment.csv", index=False)
             (server.EXTERNAL_DIR / "external_meta.json").write_text(json.dumps({"source": "test"}))
+            server.SAMPLES_FILE.write_text(json.dumps({
+                "half_life": server.CFG["half_life"],
+                "friendly_weight": server.CFG["friendly_weight"],
+                "data_max_date": "2026-07-06",
+                "boots": 1,
+                "samples": [{"attack": {"Canada": 0.1}, "defence": {"Canada": -0.1},
+                             "hfa": 0.2, "rho": -0.08}],
+            }))
             server.STATE_FILE.write_text(json.dumps({
                 "payload": {"meta": {"live_weight": 0.03, "scoreline_dispersion": 0.1},
                             "bracket": [{"team": "Canada", "bronze": 0.0}],
@@ -676,15 +687,18 @@ def test_load_state_attaches_external_strength_after_reload():
                            "hfa": 0.2, "rho": -0.08},
             }))
             server.STATE.update({"payload": None, "external_strength": {}, "form_strength": {}})
-            server._load_form_strength = lambda: ({}, {})
-            server._load_live_strength = lambda: ({}, {})
+            server._load_form_strength = lambda *args, **kwargs: ({}, {})
+            server._load_live_strength = lambda *args, **kwargs: ({}, {})
             assert server.load_state()
             meta = server.STATE["payload"]["meta"]["external_data"]
             assert meta["strength_rows"] == 1
             assert server.STATE["payload"]["ratings"][0]["fifa_ranking"] == 16
+            assert server.STATE["samples"]["boots"] == 1
         finally:
             server.STATE_FILE = old_state_file
+            server.SAMPLES_FILE = old_samples_file
             server.EXTERNAL_DIR = old_external_dir
+            server.load_matches = old_load_matches
             server._load_form_strength = old_form_loader
             server._load_live_strength = old_live_loader
             server.STATE.clear()
@@ -780,18 +794,18 @@ def test_case_pre_match_live_prior_excludes_current_match():
 
 def test_state_refresh_and_freshness_detect_new_day_staleness():
     import server
-    sig = server._availability_signature()
+    sig = server._model_input_signature()
     assert server._state_needs_refresh(
-        {"generated": "2026-07-05T08:00:00+00:00", "availability_input": sig},
+        {"generated": "2026-07-05T08:00:00+00:00", "model_input_signature": sig},
         today="2026-07-06")
     assert not server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00", "availability_input": sig},
+        {"generated": "2026-07-06T01:00:00+00:00", "model_input_signature": sig},
         today="2026-07-06")
     assert server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00", "availability_input": sig},
+        {"generated": "2026-07-06T01:00:00+00:00", "model_input_signature": sig},
         today="2026-07-06T01:16:00+00:00", max_age_hours=0.25)
     assert not server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00", "availability_input": sig},
+        {"generated": "2026-07-06T01:00:00+00:00", "model_input_signature": sig},
         today="2026-07-06T01:14:00+00:00", max_age_hours=0.25)
     bracket = {
         "r16": [{"id": "R16-1", "home": "A", "away": "B",
@@ -803,7 +817,7 @@ def test_state_refresh_and_freshness_detect_new_day_staleness():
     assert f["result_lag_days"] == 2
 
 
-def test_state_refresh_detects_availability_file_change():
+def test_state_refresh_detects_model_input_file_change():
     import server
     import json as _json
     from tempfile import TemporaryDirectory
@@ -813,11 +827,11 @@ def test_state_refresh_detects_availability_file_change():
         try:
             server.AVAILABILITY_FILE = path
             meta = {"generated": "2026-07-06T01:00:00+00:00",
-                    "availability_input": server._availability_signature()}
+                    "model_input_signature": server._model_input_signature()}
             assert not server._state_needs_refresh(meta, today="2026-07-06")
             path.write_text(_json.dumps({"France": [{"player": "X", "value_share": 0.1}]}))
             assert server._state_needs_refresh(meta, today="2026-07-06")
-            meta["availability_input"] = server._availability_signature()
+            meta["model_input_signature"] = server._model_input_signature()
             assert not server._state_needs_refresh(meta, today="2026-07-06")
         finally:
             server.AVAILABILITY_FILE = old_file
