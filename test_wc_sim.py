@@ -264,6 +264,19 @@ def test_live_context_strength_uses_wc_xg_and_stat_momentum():
     assert live_rate_adjustment("Momentum", "Flat", strength, 0.03) > 0
 
 
+def test_live_context_strength_shrinks_tiny_samples():
+    from live_signals import build_live_context_strength
+    rows = pd.DataFrame([
+        {"date": "2026-06-20", "home_team": "Spark", "away_team": "Flat",
+         "home_score": 3, "away_score": 0, "tournament": "FIFA World Cup"},
+    ])
+    strength, meta = build_live_context_strength(rows)
+    assert meta["confidence_target_matches"] == 3
+    assert meta["avg_team_confidence"] == 0.333
+    assert 0 < strength["Spark"] < 0.5
+    assert -0.5 < strength["Flat"] < 0
+
+
 def test_live_prior_moves_rates_after_other_priors():
     atk, dfn = {"A": 0.0, "B": 0.0}, {"A": 0.0, "B": 0.0}
     lam, mu = match_rates(atk, dfn, 0.0, "A", "B", "", goal_scale=1.0,

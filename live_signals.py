@@ -14,6 +14,7 @@ ROOT = Path(__file__).parent
 DEFAULT_LIVE_WEIGHT = 0.03
 MAX_LIVE_RATE_ADJ = 0.10
 WORLD_CUP_START = "2026-06-01"
+CONFIDENCE_TARGET_MATCHES = 3
 
 
 def build_live_context_strength(matches, features=None, as_of=None, window=5, min_matches=1,
@@ -64,11 +65,19 @@ def build_live_context_strength(matches, features=None, as_of=None, window=5, mi
         weights = 0.78 ** ages
         raw[team] = float(np.average([r["quality"] for r in recent], weights=weights))
     strength = _z_map(raw)
+    confidence = {
+        team: min(1.0, len(hist.get(team, [])) / CONFIDENCE_TARGET_MATCHES)
+        for team in strength
+    }
+    strength = {team: round(float(value) * confidence[team], 4)
+                for team, value in strength.items()}
     return strength, {
         "present": True,
         "rows": len(strength),
         "matches": int(len(df)),
         "window": window,
+        "confidence_target_matches": CONFIDENCE_TARGET_MATCHES,
+        "avg_team_confidence": round(float(np.mean(list(confidence.values()))), 3) if confidence else 0.0,
         "source": "current_world_cup_xg_stats_results",
         "opponent_adjusted": bool(external_strength),
         "xg_rows": xg_rows,

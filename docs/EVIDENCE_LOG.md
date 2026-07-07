@@ -531,6 +531,14 @@ current. `load_state()` also reloads matching bootstrap samples, so what-if
 simulations keep ensemble uncertainty after restart instead of falling back to
 a point estimate.
 
+## Live-context overfit repair (2026-07-07)
+
+User concern: form, momentum, xG, and star context should feed the model, but
+not turn one match into a hard narrative. Repair: current-tournament live
+strength still uses result residuals, xG, and stat pressure, then shrinks each
+team's live z-score by completed-match confidence up to three matches. One-match
+signals now move odds directionally without receiving full live-context weight.
+
 ## Scoreline dispersion repair (2026-07-07)
 
 User concern: exact-score cards were too concentrated around 0-0, 1-0, 0-1,
