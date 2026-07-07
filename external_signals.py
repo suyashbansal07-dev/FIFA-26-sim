@@ -54,6 +54,11 @@ def build_external_strength(df: pd.DataFrame, use_fiwc_impact=True):
         + 0.30 * _z(_num_col(df, "fiwc_top_market_usage_share").clip(lower=0, upper=1))
         + 0.20 * _z(np.log1p(_num_col(df, "fiwc_top_market_impact_score").clip(lower=0)))
     ) if use_fiwc_impact else pd.Series(np.zeros(len(df)), index=df.index)
+    active_star = (
+        0.55 * _z(np.log1p(top1.clip(lower=0))
+                  * _num_col(df, "fiwc_top_market_usage_share").clip(lower=0, upper=1).fillna(0))
+        + 0.45 * _z(np.log1p(_num_col(df, "fiwc_top_market_impact_score").clip(lower=0)))
+    ) if use_fiwc_impact else pd.Series(np.zeros(len(df)), index=df.index)
     rank = _z(-np.log(_num_col(df, "fifa_ranking").clip(lower=1)))
     caps = _z(np.log1p(_num_col(df, "squad_caps").clip(lower=0)))
     goals = _z(np.log1p(_num_col(df, "squad_goals").clip(lower=0)))
@@ -61,9 +66,10 @@ def build_external_strength(df: pd.DataFrame, use_fiwc_impact=True):
     position = _z(_num_col(df, "position_balance"))
     same_club = _z(_num_col(df, "same_club_share"))
     if use_fiwc_impact:
-        raw = (0.255 * quality + 0.115 * depth + 0.335 * rank + 0.05 * caps
+        raw = (0.25 * quality + 0.115 * depth + 0.325 * rank + 0.05 * caps
                + 0.03 * goals + 0.05 * chemistry + 0.03 * position + 0.02 * same_club
-               + 0.025 * star + 0.015 * attacker + 0.05 * fiwc_impact + 0.025 * fiwc_usage)
+               + 0.015 * star + 0.015 * attacker + 0.05 * fiwc_impact + 0.025 * fiwc_usage
+               + 0.025 * active_star)
     else:
         raw = (0.29 * quality + 0.13 * depth + 0.35 * rank + 0.055 * caps
                + 0.03 * goals + 0.055 * chemistry + 0.03 * position + 0.02 * same_club

@@ -81,6 +81,7 @@ def record_payload_forecasts(payload, ledger_path=LEDGER, now=None):
                 "half_life_days": payload["meta"].get("half_life_days"),
                 "friendly_weight": payload["meta"].get("friendly_weight"),
                 "goal_scale": payload["meta"].get("goal_scale"),
+                "scoreline_dispersion": payload["meta"].get("scoreline_dispersion"),
                 "external_weight": payload["meta"].get("external_weight"),
                 "form_weight": payload["meta"].get("form_weight"),
                 "live_weight": payload["meta"].get("live_weight"),

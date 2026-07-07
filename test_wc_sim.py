@@ -35,6 +35,15 @@ def test_grid_and_markets_sum_to_one():
     assert 0 < o25 < 1 and len(top) == 3
 
 
+def test_scoreline_dispersion_reduces_modal_score_overconfidence():
+    base = dc_grid(1.7, 1.2, -0.08)
+    spread = dc_grid(1.7, 1.2, -0.08, scoreline_dispersion=0.16)
+    totals = np.add.outer(np.arange(MAX_GOALS), np.arange(MAX_GOALS))
+    assert abs(spread.sum() - 1) < 1e-12
+    assert spread.max() < base.max()
+    assert abs(float((spread * totals).sum() - (base * totals).sum())) < 0.02
+
+
 def test_host_advantage_applies_only_at_home_venue():
     atk, dfn, hfa = {"A": 0.3, "B": 0.1}, {"A": -0.2, "B": -0.1}, 0.25
     lam_neutral, _ = match_rates(atk, dfn, hfa, "A", "B", "Elsewhere", goal_scale=1.0)
@@ -138,6 +147,27 @@ def test_external_strength_uses_current_wc_usage_availability_when_enabled():
     assert offline["Used"] == offline["Benched"]
 
 
+def test_external_strength_boosts_active_top_market_star_only_when_usage_enabled():
+    from external_signals import build_external_strength
+    common = {"top11_market_value": 400_000_000, "top23_market_value": 650_000_000,
+              "fifa_ranking": 12, "squad_caps": 700, "squad_goals": 100,
+              "chemistry_score": 0.7, "position_balance": 0.8, "same_club_share": 0.1,
+              "top1_market_value": 180_000_000, "top3_market_value": 280_000_000,
+              "top_attacker_market_value": 180_000_000,
+              "fiwc_impact_score": 150, "fiwc_top_impact_score": 70,
+              "fiwc_top11_usage_share": 0.55}
+    rows = pd.DataFrame([
+        {"team": "ActiveStar", **common, "fiwc_top_market_usage_share": 0.95,
+         "fiwc_top_market_impact_score": 400},
+        {"team": "QuietStar", **common, "fiwc_top_market_usage_share": 0.15,
+         "fiwc_top_market_impact_score": 5},
+    ])
+    live = build_external_strength(rows, use_fiwc_impact=True)
+    offline = build_external_strength(rows, use_fiwc_impact=False)
+    assert live["ActiveStar"] > live["QuietStar"]
+    assert offline["ActiveStar"] == offline["QuietStar"]
+
+
 def test_fifa_live_ranking_rows_are_canonicalized():
     from fifa_rankings import rows_from_payload
     payload = {"Results": [
@@ -234,6 +264,19 @@ def test_live_context_strength_uses_wc_xg_and_stat_momentum():
     assert live_rate_adjustment("Momentum", "Flat", strength, 0.03) > 0
 
 
+def test_live_context_strength_shrinks_tiny_samples():
+    from live_signals import build_live_context_strength
+    rows = pd.DataFrame([
+        {"date": "2026-06-20", "home_team": "Spark", "away_team": "Flat",
+         "home_score": 3, "away_score": 0, "tournament": "FIFA World Cup"},
+    ])
+    strength, meta = build_live_context_strength(rows)
+    assert meta["confidence_target_matches"] == 3
+    assert meta["avg_team_confidence"] == 0.333
+    assert 0 < strength["Spark"] < 0.5
+    assert -0.5 < strength["Flat"] < 0
+
+
 def test_live_prior_moves_rates_after_other_priors():
     atk, dfn = {"A": 0.0, "B": 0.0}, {"A": 0.0, "B": 0.0}
     lam, mu = match_rates(atk, dfn, 0.0, "A", "B", "", goal_scale=1.0,
@@ -281,7 +324,8 @@ def test_backtest_scoreline_calibration_metrics_are_recorded():
                           "away_score": 1, "neutral": True, "outcome": 0}])
     keys = ("rps", "brier", "logloss", "fav_p", "fav_hit", "uniform", "freq",
             "pred_goals", "actual_goals", "pred_over25", "actual_over25",
-            "scoreline_logloss", "score_top1", "score_top3", "top_low_score")
+            "scoreline_logloss", "modal_score_prob", "score_top1", "score_top3",
+            "top_low_score")
     sink = {k: [] for k in keys} | {"skipped": 0, "_freq": np.full(3, 1 / 3)}
     _score_rows(rows, {"A": 0.1, "B": -0.1}, {"A": -0.1, "B": 0.1},
                 0.0, -0.05, sink, goal_scale=1.0)
@@ -290,6 +334,7 @@ def test_backtest_scoreline_calibration_metrics_are_recorded():
     assert sink["pred_goals"][0] > 0
     assert 0 <= sink["pred_over25"][0] <= 1
     assert sink["scoreline_logloss"][0] > 0
+    assert sink["modal_score_prob"][0] > 0
 
 
 def test_market_devig_and_log_pool():
@@ -350,6 +395,7 @@ def test_forward_loop_settles_only_pre_match_forecasts():
     from forward_loop import record_payload_forecasts, settle_forward_forecasts
     payload = {"meta": {"generated": "2026-07-01T00:00:00+00:00", "half_life_days": 550,
                         "friendly_weight": 1, "goal_scale": 1.1, "external_weight": 0.15,
+                        "scoreline_dispersion": 0.1,
                         "form_weight": 0.02, "live_weight": 0.03,
                         "sampler": "antithetic", "sims": 1000000,
                         "hfa": 0.2, "rho": -0.08},
@@ -365,6 +411,7 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         record_payload_forecasts(payload, ledger, now=pd.Timestamp("2026-07-01", tz="UTC").to_pydatetime())
         rows = [json.loads(line) for line in ledger.read_text().splitlines()]
         assert rows[0]["model"]["external_weight"] == 0.15
+        assert rows[0]["model"]["scoreline_dispersion"] == 0.1
         assert rows[0]["model"]["form_weight"] == 0.02
         assert rows[0]["model"]["live_weight"] == 0.03
         assert rows[0]["model"]["sims"] == 1000000
@@ -380,6 +427,7 @@ def test_forward_loop_records_context_buckets():
     from forward_loop import record_payload_forecasts, settle_forward_forecasts
     payload = {"meta": {"generated": "2026-07-04T00:00:00+00:00", "half_life_days": 550,
                         "friendly_weight": 1, "goal_scale": 1.1, "external_weight": 0.15,
+                        "scoreline_dispersion": 0.1,
                         "form_weight": 0.0, "sampler": "antithetic", "sims": 1000000,
                         "hfa": 0.2, "rho": -0.08},
                "fixtures": [{"id": "R16-X", "date": "2026-07-05", "home": "A",
@@ -619,20 +667,32 @@ def test_load_state_attaches_external_strength_after_reload():
     with TemporaryDirectory() as d:
         root = Path(d)
         old_state_file, old_external_dir = server.STATE_FILE, server.EXTERNAL_DIR
+        old_samples_file, old_load_matches = server.SAMPLES_FILE, server.load_matches
         old_form_loader = server._load_form_strength
         old_live_loader = server._load_live_strength
         old_state = {k: v for k, v in server.STATE.items()}
         server.STATE_FILE = root / "state.json"
+        server.SAMPLES_FILE = root / "param_samples.json"
         server.EXTERNAL_DIR = root / "external"
         server.EXTERNAL_DIR.mkdir()
         try:
+            server.load_matches = lambda years: pd.DataFrame({"date": pd.to_datetime(["2026-07-06"])})
             pd.DataFrame([{"team": "Canada", "fifa_ranking": 16,
                            "top23_market_value": 199500000, "squad_caps": 1184,
                            "squad_goals": 158, "chemistry_score": 0.7}]).to_csv(
                 server.EXTERNAL_DIR / "project_team_enrichment.csv", index=False)
             (server.EXTERNAL_DIR / "external_meta.json").write_text(json.dumps({"source": "test"}))
+            server.SAMPLES_FILE.write_text(json.dumps({
+                "half_life": server.CFG["half_life"],
+                "friendly_weight": server.CFG["friendly_weight"],
+                "data_max_date": "2026-07-06",
+                "boots": 1,
+                "samples": [{"attack": {"Canada": 0.1}, "defence": {"Canada": -0.1},
+                             "hfa": 0.2, "rho": -0.08}],
+            }))
             server.STATE_FILE.write_text(json.dumps({
-                "payload": {"meta": {"live_weight": 0.03}, "bracket": [{"team": "Canada", "bronze": 0.0}],
+                "payload": {"meta": {"live_weight": 0.03, "scoreline_dispersion": 0.1},
+                            "bracket": [{"team": "Canada", "bronze": 0.0}],
                             "ratings": [{"team": "Canada"}],
                             "verdict": {"champion": "Canada", "matches": []}},
                 "pens": {},
@@ -640,15 +700,18 @@ def test_load_state_attaches_external_strength_after_reload():
                            "hfa": 0.2, "rho": -0.08},
             }))
             server.STATE.update({"payload": None, "external_strength": {}, "form_strength": {}})
-            server._load_form_strength = lambda: ({}, {})
-            server._load_live_strength = lambda: ({}, {})
+            server._load_form_strength = lambda *args, **kwargs: ({}, {})
+            server._load_live_strength = lambda *args, **kwargs: ({}, {})
             assert server.load_state()
             meta = server.STATE["payload"]["meta"]["external_data"]
             assert meta["strength_rows"] == 1
             assert server.STATE["payload"]["ratings"][0]["fifa_ranking"] == 16
+            assert server.STATE["samples"]["boots"] == 1
         finally:
             server.STATE_FILE = old_state_file
+            server.SAMPLES_FILE = old_samples_file
             server.EXTERNAL_DIR = old_external_dir
+            server.load_matches = old_load_matches
             server._load_form_strength = old_form_loader
             server._load_live_strength = old_live_loader
             server.STATE.clear()
@@ -674,6 +737,19 @@ def test_load_state_rejects_stale_no_bronze_payload():
             server.STATE_FILE = old_state_file
             server.STATE.clear()
             server.STATE.update(old_state)
+
+
+def test_prediction_summary_separates_forced_pick_from_mc_favorite():
+    import server
+    verdict = {"champion": "Argentina", "champion_match_support": 0.51234}
+    bracket = [{"team": "Spain", "champion": 0.2659},
+               {"team": "Argentina", "champion": 0.2365}]
+    summary = server._prediction_summary(verdict, bracket)
+    assert summary["definitive_champion"] == "Argentina"
+    assert summary["definitive_support"] == 0.5123
+    assert summary["monte_carlo_favorite"] == "Spain"
+    assert summary["monte_carlo_champion_probability"] == 0.2659
+    assert summary["champion_disagreement"]
 
 
 def test_case_pre_match_form_prior_excludes_current_match():
@@ -731,15 +807,18 @@ def test_case_pre_match_live_prior_excludes_current_match():
 
 def test_state_refresh_and_freshness_detect_new_day_staleness():
     import server
+    sig = server._model_input_signature()
     assert server._state_needs_refresh(
-        {"generated": "2026-07-05T08:00:00+00:00"}, today="2026-07-06")
+        {"generated": "2026-07-05T08:00:00+00:00", "model_input_signature": sig},
+        today="2026-07-06")
     assert not server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00"}, today="2026-07-06")
+        {"generated": "2026-07-06T01:00:00+00:00", "model_input_signature": sig},
+        today="2026-07-06")
     assert server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00"},
+        {"generated": "2026-07-06T01:00:00+00:00", "model_input_signature": sig},
         today="2026-07-06T01:16:00+00:00", max_age_hours=0.25)
     assert not server._state_needs_refresh(
-        {"generated": "2026-07-06T01:00:00+00:00"},
+        {"generated": "2026-07-06T01:00:00+00:00", "model_input_signature": sig},
         today="2026-07-06T01:14:00+00:00", max_age_hours=0.25)
     bracket = {
         "r16": [{"id": "R16-1", "home": "A", "away": "B",
@@ -749,6 +828,44 @@ def test_state_refresh_and_freshness_detect_new_day_staleness():
     f = server._freshness_meta({"newest_result": "2026-07-04"}, bracket, {}, today="2026-07-06")
     assert f["stale"] and f["overdue_unplayed_slots"] == ["R16-1"]
     assert f["result_lag_days"] == 2
+
+
+def test_state_refresh_detects_model_input_file_change():
+    import server
+    import json as _json
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory() as d:
+        old_file = server.AVAILABILITY_FILE
+        path = Path(d) / "availability.json"
+        try:
+            server.AVAILABILITY_FILE = path
+            meta = {"generated": "2026-07-06T01:00:00+00:00",
+                    "model_input_signature": server._model_input_signature()}
+            assert not server._state_needs_refresh(meta, today="2026-07-06")
+            path.write_text(_json.dumps({"France": [{"player": "X", "value_share": 0.1}]}))
+            assert server._state_needs_refresh(meta, today="2026-07-06")
+            meta["model_input_signature"] = server._model_input_signature()
+            assert not server._state_needs_refresh(meta, today="2026-07-06")
+        finally:
+            server.AVAILABILITY_FILE = old_file
+
+
+def test_state_refresh_detects_model_code_change():
+    import server
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory() as d:
+        old_files = server.MODEL_CODE_FILES
+        path = Path(d) / "live_signals.py"
+        try:
+            path.write_text("v1")
+            server.MODEL_CODE_FILES = (path,)
+            meta = {"generated": "2026-07-06T01:00:00+00:00",
+                    "model_input_signature": server._model_input_signature()}
+            assert not server._state_needs_refresh(meta, today="2026-07-06")
+            path.write_text("v2")
+            assert server._state_needs_refresh(meta, today="2026-07-06")
+        finally:
+            server.MODEL_CODE_FILES = old_files
 
 
 def test_forward_safe_context_uses_only_prior_matches():

@@ -119,6 +119,7 @@
         <label class="mut">half-life (days) <input id="knobHL" type="number" min="100" max="2000" step="50" style="width:75px"></label>
         <label class="mut">friendly weight <input id="knobFW" type="number" min="0" max="1" step="0.1" style="width:60px"></label>
         <label class="mut">goal scale <input id="knobGS" type="number" min="0.8" max="1.3" step="0.05" style="width:65px"></label>
+        <label class="mut">score spread <input id="knobSD" type="number" min="0" max="0.3" step="0.01" style="width:65px"></label>
         <label class="mut">external weight <input id="knobEW" type="number" min="0" max="0.15" step="0.01" style="width:65px"></label>
         <label class="mut">form weight <input id="knobTW" type="number" min="0" max="0.08" step="0.01" style="width:65px"></label>
         <label class="mut">live ctx weight <input id="knobLW" type="number" min="0" max="0.06" step="0.01" style="width:65px"></label>
@@ -143,6 +144,7 @@
 
 <section>
   <h2>Championship odds</h2>
+  <p id="predictionLine" class="plate" hidden></p>
   <table id="bracketTbl"></table>
   <p class="mut" style="margin:10px 0 4px">Most frequent complete finishes (joint mode):</p>
   <table id="pathsTbl" style="max-width:560px"></table>
@@ -282,7 +284,7 @@ function renderChart(consensus) {
      <div class="round">${slotNode(f.id, 'Final · Jul 19', f.from)}</div>`;
   $('consensusLine').hidden = !consensus;
   if (consensus) {
-    $('consensusLine').innerHTML = `🏆 Consensus champion: <b>${consensus.modal_champion.team}</b>
+    $('consensusLine').innerHTML = `Monte Carlo path champion: <b>${consensus.modal_champion.team}</b>
       <span class="mut">(${pct(consensus.modal_champion.p)} of ${consensus.sims.toLocaleString()} sims ·
       full-path joint support ${(100 * consensus.consensus_path.joint_support).toFixed(3)}% ·
       green picks show slot probability; hover for path-conditional support)</span>`;
@@ -346,7 +348,7 @@ function setCounterfactualMode() {
 }
 
 /* ---------- odds + paths ---------- */
-let CURRENT = { bracket: null, consensus: null };
+let CURRENT = { bracket: null, consensus: null, prediction: null };
 function championDeltas(bracket, whatif) {
   // trend vs the previous refresh (localStorage); frozen during what-if views
   let prev = {};
@@ -366,8 +368,26 @@ function championDeltas(bracket, whatif) {
   return deltas;
 }
 
-function renderOdds(bracket, consensus, whatif, counterfactual=false) {
-  CURRENT = { bracket, consensus };
+function renderPrediction(prediction, whatif=false) {
+  $('predictionLine').hidden = !prediction;
+  if (!prediction) return;
+  const pick = prediction.definitive_champion || 'n/a';
+  const support = prediction.definitive_support == null ? '' :
+    ` (${pct(prediction.definitive_support)} final support)`;
+  const mc = prediction.monte_carlo_favorite || 'n/a';
+  const mcProb = prediction.monte_carlo_champion_probability == null ? '' :
+    ` ${pct(prediction.monte_carlo_champion_probability)} title odds`;
+  const note = prediction.champion_disagreement
+    ? 'forced-pick bracket and full-path title odds disagree'
+    : 'forced-pick bracket and full-path title odds agree';
+  $('predictionLine').innerHTML =
+    `${whatif ? 'What-if' : 'Definitive'} bracket champion: <b>${pick}</b>${support}` +
+    `<span class="mut"> - Monte Carlo favorite: ${mc}${mcProb} - ${note}</span>`;
+}
+
+function renderOdds(bracket, consensus, prediction, whatif, counterfactual=false) {
+  CURRENT = { bracket, consensus, prediction };
+  renderPrediction(prediction, whatif);
   const deltas = whatif ? {} : championDeltas(bracket, whatif);
   const hasBronze = bracket.some(r => r.bronze != null);
   const rows = bracket.map(r =>
@@ -597,6 +617,7 @@ async function doRefresh() {
     await j('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
                               goal_scale: +$('knobGS').value,
+                              scoreline_dispersion: +$('knobSD').value,
                               external_weight: +$('knobEW').value,
                               form_weight: +$('knobTW').value,
                               live_weight: +$('knobLW').value,
@@ -623,7 +644,7 @@ async function doWhatif(updateUrl=true) {
                                                               sampler: $('knobSampler').value,
                                                               counterfactual: $('counterfactualMode').checked }) });
     if (updateUrl) updateShareUrl(r.counterfactual);
-    renderOdds(r.bracket, r.consensus, true, r.counterfactual);
+    renderOdds(r.bracket, r.consensus, r.prediction, true, r.counterfactual);
     renderStaticBracket(r.verdict, true);
   } catch (e) { alert(e.message); }
 }
@@ -633,7 +654,7 @@ function resetWhatif() {
   $('counterfactualMode').checked = false;
   syncPinButton();
   updateShareUrl(false);
-  renderOdds(DATA.bracket, DATA.consensus, false);
+  renderOdds(DATA.bracket, DATA.consensus, DATA.prediction, false);
   renderStaticBracket(DATA.verdict, false);
 }
 
@@ -646,14 +667,16 @@ function renderBacktest(b) {
   const scoreline = sc.predicted_goals == null ? '' :
     `<p style="margin:0 0 8px">Goals ${sc.predicted_goals} predicted / ${sc.actual_goals} actual
        · over 2.5 ${pct(sc.predicted_over25)} predicted / ${pct(sc.actual_over25)} actual
+       · modal score prob ${pct(sc.modal_score_prob || 0)}
        · exact score top1 ${pct(sc.top1_hit)}, top3 ${pct(sc.top3_hit)}
        · low-score top pick ${pct(sc.top_low_score_share)}</p>`;
   $('backtest').innerHTML =
     `<p style="margin:0 0 8px">RPS <b>${b.rps}</b> vs uniform ${b.rps_uniform} / train-freq ${b.rps_trainfreq}
        · Brier ${b.brier} · log-loss ${b.logloss} · ${b.n} matches since ${b.config.start}<br>
-       in-sample RPS ${b.rps_in_sample} → out-of-sample gap ${gap} (large positive = overfit)
-       · half-life ${b.config.half_life}d · friendly weight ${b.config.friendly_weight}
-       · external weight ${b.config.external_weight ?? 0} · form weight ${b.config.form_weight ?? 0}</p>
+        in-sample RPS ${b.rps_in_sample} → out-of-sample gap ${gap} (large positive = overfit)
+        · half-life ${b.config.half_life}d · friendly weight ${b.config.friendly_weight}
+        · score spread ${b.config.scoreline_dispersion ?? 0}
+        · external weight ${b.config.external_weight ?? 0} · form weight ${b.config.form_weight ?? 0}</p>
       ${scoreline}<table style="max-width:480px"><tr><th>favorite prob bin</th><th class="num">predicted</th>
        <th class="num">observed</th><th class="num">n</th></tr>${rows}</table>
       <p>calibrated when predicted ≈ observed per bin</p>`;
@@ -666,6 +689,7 @@ async function runBacktest() {
     renderBacktest(await j('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ half_life: +$('knobHL').value, friendly_weight: +$('knobFW').value,
                              goal_scale: +$('knobGS').value,
+                             scoreline_dispersion: +$('knobSD').value,
                              external_weight: +$('knobEW').value,
                              form_weight: +$('knobTW').value,
                              refit_days: 45, train_years: 4 }) }));
@@ -681,7 +705,7 @@ async function loadBacktest() {
 async function load() {
   DATA = await j('/api/data');
   renderMeta();
-  renderOdds(DATA.bracket, DATA.consensus, false);
+  renderOdds(DATA.bracket, DATA.consensus, DATA.prediction, false);
   renderStaticBracket(DATA.verdict, false);
   renderRatings();
   renderExternal();
@@ -691,6 +715,7 @@ async function load() {
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
   $('knobGS').value = DATA.meta.goal_scale ?? 1.1;
+  $('knobSD').value = DATA.meta.scoreline_dispersion ?? 0.1;
   $('knobEW').value = DATA.meta.external_weight ?? 0;
   $('knobTW').value = DATA.meta.form_weight ?? 0;
   $('knobLW').value = DATA.meta.live_weight ?? 0;

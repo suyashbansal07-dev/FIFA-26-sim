@@ -500,6 +500,73 @@ Decision: do not create a missing-starter model prior yet. There are no FIWC
 lineup rows to validate or apply it. Current usage is useful context, but
 starter-specific adjustments would be fake precision.
 
+## Active-star x-factor guard (2026-07-07)
+
+User concern: market-only top-player labels can over-credit expensive players
+who are not currently starting or producing, while active stars such as Haaland
+should be visible in the model without team-specific exceptions.
+
+Decision: keep the static market-star component, but reduce its weight inside
+the live external prior and add an active-star component from
+`fiwc_top_market_usage_share` and `fiwc_top_market_impact_score`. Missing usage
+stays neutral. The change rewards used/scoring stars and reduces the live edge
+from quiet/benched market stars without hard-coding player names.
+
+## Availability cache invalidation (2026-07-07)
+
+User concern: late injuries/suspensions matter, but automatic lineup feeds are
+not reliable enough for unvalidated missing-starter adjustments.
+
+Decision: keep the manual `data/availability.json` layer, but make it part of
+the state cache key. `server.py` now stores a SHA-256 fingerprint of the
+availability file in `meta.availability_input`; startup refreshes the bracket
+when that file changes, so manual injury/suspension updates cannot silently
+decorate stale odds.
+
+Update: generalized the cache key into `meta.model_input_signature`. The server
+now fingerprints `matches.csv`, `shootouts.csv`, `match_features.csv`,
+`project_team_enrichment.csv`, `availability.json`, and `param_samples.json`.
+Any changed model input forces startup refresh before odds are treated as
+current. `load_state()` also reloads matching bootstrap samples, so what-if
+simulations keep ensemble uncertainty after restart instead of falling back to
+a point estimate.
+
+## Live-context overfit repair (2026-07-07)
+
+User concern: form, momentum, xG, and star context should feed the model, but
+not turn one match into a hard narrative. Repair: current-tournament live
+strength still uses result residuals, xG, and stat pressure, then shrinks each
+team's live z-score by completed-match confidence up to three matches. One-match
+signals now move odds directionally without receiving full live-context weight.
+
+Follow-up: restart proof exposed that cached state could survive Python model
+logic changes because only data files were fingerprinted. `meta.model_input_signature`
+now includes the core model code files too, so edits to the simulator, external
+priors, form/live priors, availability, or match-feature parser force a refresh
+before odds are treated as current.
+
+## Scoreline dispersion repair (2026-07-07)
+
+User concern: exact-score cards were too concentrated around 0-0, 1-0, 0-1,
+and 1-1. Raising `goal_scale` would inflate total goals, so I added a small
+scoreline-only tempo mixture: each grid averages low/normal/high match tempo
+with weights 25/50/25. This reduces exact-score overconfidence while preserving
+the fitted mean rates.
+
+Walk-forward check (`396` OOS matches, `half_life=1100`, `goal_scale=1.10`,
+`external_weight=0.15`, `form_weight=0.00`):
+
+| Score spread | RPS | Brier | Log-loss | Exact-score log-loss | Pred goals | Pred O2.5 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.00 | 0.1516 | 0.4825 | 0.8311 | 2.8903 | 2.951 | 0.534 |
+| 0.05 | 0.1516 | 0.4825 | 0.8311 | 2.8902 | 2.951 | 0.533 |
+| 0.10 | 0.1516 | 0.4825 | 0.8309 | 2.8899 | 2.951 | 0.532 |
+| 0.15 | 0.1516 | 0.4824 | 0.8307 | 2.8896 | 2.951 | 0.531 |
+
+Decision: default `scoreline_dispersion=0.10`. It moves exact-score sharpness
+in the right direction without changing the 1X2 metrics or aggregate goal
+level materially.
+
 ## Backlog Closure (2026-07-06)
 
 - Market anchor built (`market_anchor.py`, `/api/market`, UI section): de-vigs

@@ -30,6 +30,7 @@ ROOT = Path(__file__).parent
 MAX_GOALS = 10  # grid covers scorelines 0-0 .. 9-9 (spec 3.1)
 DEFAULT_SIMS = 1_000_000
 DEFAULT_GOAL_SCALE = 1.10
+DEFAULT_SCORELINE_DISPERSION = 0.10
 SAMPLERS = ("random", "antithetic", "lhs", "sobol")
 
 
@@ -100,7 +101,7 @@ def match_rates(atk, dfn, hfa, team_a, team_b, venue_country, goal_scale=DEFAULT
     return apply_live_prior(lam, mu, team_a, team_b, live_strength, live_weight)
 
 
-def dc_grid(lam, mu, rho, n=MAX_GOALS):
+def _dc_grid_base(lam, mu, rho, n):
     """Bivariate Poisson grid with Dixon-Coles tau correction (spec 2.2)."""
     g = np.outer(poisson.pmf(np.arange(n), lam), poisson.pmf(np.arange(n), mu))
     g[0, 0] *= 1 - lam * mu * rho
@@ -108,6 +109,17 @@ def dc_grid(lam, mu, rho, n=MAX_GOALS):
     g[1, 0] *= 1 + mu * rho
     g[1, 1] *= 1 - rho
     return g / g.sum()  # renormalise away tail truncation
+
+
+def dc_grid(lam, mu, rho, n=MAX_GOALS, scoreline_dispersion=0.0):
+    """Dixon-Coles grid, optionally averaged over low/normal/high match tempo."""
+    base = _dc_grid_base(lam, mu, rho, n)
+    d = max(0.0, min(float(scoreline_dispersion or 0.0), 0.4))
+    if not d:
+        return base
+    low = _dc_grid_base(lam * (1.0 - d), mu * (1.0 - d), rho, n)
+    high = _dc_grid_base(lam * (1.0 + d), mu * (1.0 + d), rho, n)
+    return (0.25 * low + 0.50 * base + 0.25 * high)
 
 
 def markets(g):
@@ -131,12 +143,14 @@ def shootout_rates(shootouts: pd.DataFrame) -> dict:
 
 class Simulator:
     def __init__(self, atk, dfn, hfa, rho, rng, pens=None, goal_scale=DEFAULT_GOAL_SCALE,
+                 scoreline_dispersion=DEFAULT_SCORELINE_DISPERSION,
                  external_strength=None, external_weight=0.0,
                  form_strength=None, form_weight=0.0,
                  live_strength=None, live_weight=0.0):
         self.atk, self.dfn, self.hfa, self.rho, self.rng = atk, dfn, hfa, rho, rng
         self.pens = pens or {}
         self.goal_scale = goal_scale
+        self.scoreline_dispersion = scoreline_dispersion
         self.external_strength = external_strength or {}
         self.external_weight = external_weight
         self.form_strength = form_strength or {}
@@ -153,7 +167,7 @@ class Simulator:
                                   self.external_strength, self.external_weight,
                                   self.form_strength, self.form_weight,
                                   self.live_strength, self.live_weight)
-            g = dc_grid(lam, mu, self.rho)
+            g = dc_grid(lam, mu, self.rho, scoreline_dispersion=self.scoreline_dispersion)
             self._cache[key] = (lam, mu, g.ravel(), g)
         return self._cache[key]
 
@@ -166,7 +180,7 @@ class Simulator:
         if key not in self._advance_cache:
             lam, mu, _, g = self.grid_for(a, b, venue)
             h, d, _, _, _ = markets(g)
-            et = dc_grid(lam / 3, mu / 3, 0.0)
+            et = dc_grid(lam / 3, mu / 3, 0.0, scoreline_dispersion=self.scoreline_dispersion)
             eh, ed, _, _, _ = markets(et)
             self._advance_cache[key] = h + d * (eh + ed * self.pens_prob(a, b))
         return self._advance_cache[key]
@@ -319,7 +333,8 @@ def run_tournament(sim, bracket, known, n_sims, sampler="antithetic", return_pat
 
 
 def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antithetic",
-                 seed=None, goal_scale=DEFAULT_GOAL_SCALE, external_strength=None,
+                 seed=None, goal_scale=DEFAULT_GOAL_SCALE,
+                 scoreline_dispersion=DEFAULT_SCORELINE_DISPERSION, external_strength=None,
                  external_weight=0.0, form_strength=None, form_weight=0.0,
                  live_strength=None, live_weight=0.0):
     """Mixture over bootstrap parameter samples (uncertainty.py): each sample simulates
@@ -333,6 +348,7 @@ def run_ensemble(param_samples, pens, bracket, known, n_sims, sampler="antitheti
             continue
         sim = Simulator(ps["attack"], ps["defence"], ps["hfa"], ps["rho"], rng,
                         pens=pens, goal_scale=goal_scale,
+                        scoreline_dispersion=scoreline_dispersion,
                         external_strength=external_strength, external_weight=external_weight,
                         form_strength=form_strength, form_weight=form_weight,
                         live_strength=live_strength, live_weight=live_weight)
@@ -418,6 +434,8 @@ def main():
     ap.add_argument("--friendly-weight", type=float, default=1.0, help="weight multiplier for friendlies")
     ap.add_argument("--goal-scale", type=float, default=DEFAULT_GOAL_SCALE,
                     help="multiplicative score-rate calibration (walk-forward default: 1.10)")
+    ap.add_argument("--scoreline-dispersion", type=float, default=DEFAULT_SCORELINE_DISPERSION,
+                    help="low/normal/high tempo mixture spread for exact-score grids")
     ap.add_argument("--external-weight", type=float, default=DEFAULT_EXTERNAL_WEIGHT,
                     help="capped player/market prior weight (0 disables)")
     ap.add_argument("--form-weight", type=float, default=DEFAULT_FORM_WEIGHT,
@@ -454,6 +472,7 @@ def main():
 
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(args.seed),
                     pens=shootout_rates(shootouts), goal_scale=args.goal_scale,
+                    scoreline_dispersion=args.scoreline_dispersion,
                     external_strength=external_strength, external_weight=args.external_weight,
                     form_strength=form_strength, form_weight=args.form_weight,
                     live_strength=live_strength, live_weight=args.live_weight)

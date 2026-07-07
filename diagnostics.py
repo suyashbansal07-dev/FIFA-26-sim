@@ -21,7 +21,8 @@ import pandas as pd
 from backtest import rps
 from feature_context import add_forward_safe_context, form_bucket, rest_bucket
 from match_features import attach_features, feature_coverage, load_match_features
-from wc_sim import DEFAULT_GOAL_SCALE, ROOT, dc_grid, fit_model, load_matches, team_params
+from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SCORELINE_DISPERSION, ROOT,
+                    dc_grid, fit_model, load_matches, team_params)
 
 OUT = Path(__file__).parent / "output"
 SCORELINES = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (0, 2), (2, 1), (1, 2), (2, 2)]
@@ -63,7 +64,7 @@ def _probs_from_grid(g):
 
 
 def _forecast_records(df, confeds, start, refit_days, train_years, half_life,
-                      friendly_weight, goal_scale, verbose):
+                      friendly_weight, goal_scale, scoreline_dispersion, verbose):
     df = df.copy()
     df["outcome"] = np.sign(df["away_score"] - df["home_score"]).map({-1: 0, 0: 1, 1: 2})
     start, end = pd.Timestamp(start), df["date"].max()
@@ -84,7 +85,7 @@ def _forecast_records(df, confeds, start, refit_days, train_years, half_life,
                 continue
             lam = goal_scale * math.exp(atk[row.home_team] + dfn[row.away_team] + (0.0 if row.neutral else hfa))
             mu = goal_scale * math.exp(atk[row.away_team] + dfn[row.home_team])
-            g = dc_grid(lam, mu, rho)
+            g = dc_grid(lam, mu, rho, scoreline_dispersion=scoreline_dispersion)
             p = _probs_from_grid(g)
             y = int(row.outcome)
             hc = confeds.get(row.home_team, {}).get("confed", "UNKNOWN")
@@ -165,13 +166,14 @@ def post_match_feature_summary(records):
 
 
 def diagnose(start="2026-01-01", refit_days=45, train_years=4.0,
-             half_life=550.0, friendly_weight=1.0, goal_scale=DEFAULT_GOAL_SCALE,
-             verbose=True):
+              half_life=550.0, friendly_weight=1.0, goal_scale=DEFAULT_GOAL_SCALE,
+              scoreline_dispersion=DEFAULT_SCORELINE_DISPERSION, verbose=True):
     raw = pd.read_csv(ROOT / "data" / "matches.csv", parse_dates=["date"])
     df = add_forward_safe_context(load_matches(years=train_years + 1.5))
     confeds = infer_confederations(raw)
     records, skipped = _forecast_records(df, confeds, start, refit_days, train_years,
-                                         half_life, friendly_weight, goal_scale, verbose)
+                                         half_life, friendly_weight, goal_scale,
+                                         scoreline_dispersion, verbose)
     features = load_match_features()
     records = attach_features(records, features)
     teams = set(df["home_team"]) | set(df["away_team"])
@@ -180,7 +182,7 @@ def diagnose(start="2026-01-01", refit_days=45, train_years=4.0,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "config": {"start": start, "refit_days": refit_days, "train_years": train_years,
                    "half_life": half_life, "friendly_weight": friendly_weight,
-                   "goal_scale": goal_scale},
+                   "goal_scale": goal_scale, "scoreline_dispersion": scoreline_dispersion},
         "n": len(records), "skipped": skipped,
         "metrics": {
             "rps": _mean([r["rps"] for r in records]),
@@ -226,9 +228,11 @@ def main():
     ap.add_argument("--half-life", type=float, default=550.0)
     ap.add_argument("--friendly-weight", type=float, default=1.0)
     ap.add_argument("--goal-scale", type=float, default=DEFAULT_GOAL_SCALE)
+    ap.add_argument("--scoreline-dispersion", type=float, default=DEFAULT_SCORELINE_DISPERSION)
     args = ap.parse_args()
     r = diagnose(args.start, args.refit_days, args.train_years,
-                 args.half_life, args.friendly_weight, args.goal_scale)
+                 args.half_life, args.friendly_weight, args.goal_scale,
+                 args.scoreline_dispersion)
     print(f"diagnosed {r['n']} matches ({r['skipped']} skipped), RPS {r['metrics']['rps']}")
     print(f"confed coverage {r['data_coverage']['teams_with_confed']}/{r['data_coverage']['teams_total']}")
     print("largest scoreline gaps:")
