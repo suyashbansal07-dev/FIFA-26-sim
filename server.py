@@ -24,6 +24,7 @@ import pandas as pd
 from flask import Flask, jsonify, request
 
 import fetch_data
+from availability import apply_availability
 from backtest import write_backtest
 from consensus import build_consensus
 from external_signals import DEFAULT_EXTERNAL_WEIGHT, external_rate_adjustment, load_external_strength
@@ -39,6 +40,8 @@ ROOT = Path(__file__).parent
 STATE_FILE = ROOT / "output" / "state.json"
 BACKTEST_FILE = ROOT / "output" / "backtest.json"
 SAMPLES_FILE = ROOT / "output" / "param_samples.json"
+MARKET_FILE = ROOT / "output" / "market_odds.json"
+AVAILABILITY_FILE = ROOT / "data" / "availability.json"
 EXTERNAL_DIR = ROOT / "output" / "external"
 MATCHES_FILE = ROOT / "data" / "matches.csv"
 FEATURES_FILE = ROOT / "data" / "match_features.csv"
@@ -137,6 +140,7 @@ def _attach_external(payload):
                 "squad_caps": e.get("squad_caps"),
                 "squad_goals": e.get("squad_goals"),
             })
+    payload["meta"]["availability"] = STATE.get("availability_meta", {"present": False})
     payload["meta"]["external_data"] = {
         "present": True,
         "rows": len(external["teams"]),
@@ -486,6 +490,7 @@ def refresh():
         known = known_winners(bracket, df, shootouts)
         STATE["samples"] = _load_samples(df)
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
+        STATE["external_strength"], STATE["availability_meta"] = apply_availability(STATE["external_strength"], AVAILABILITY_FILE)
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength(df)
         STATE["live_strength"], STATE["live_meta"] = _load_live_strength(df)
         if STATE["samples"]:
@@ -611,6 +616,7 @@ def load_state():
         p = s["params"]
         STATE["params"] = (p["attack"], p["defence"], p["hfa"], p["rho"])
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
+        STATE["external_strength"], STATE["availability_meta"] = apply_availability(STATE["external_strength"], AVAILABILITY_FILE)
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength()
         STATE["live_strength"], STATE["live_meta"] = _load_live_strength()
         _attach_external(STATE["payload"])
@@ -780,6 +786,12 @@ def _run_refresh_job():
     try:
         JOB.update(phase="refreshing", detail="scrape + refit + simulate", error=None)
         refresh()
+        if os.environ.get("THE_ODDS_API_KEY"):
+            try:
+                import market_anchor
+                market_anchor.fetch(os.environ["THE_ODDS_API_KEY"])
+            except Exception as e:  # anchor is a benchmark; never block the pipeline
+                print(f"market anchor fetch failed: {e}")
         if STATE["samples"] is None:  # stale/absent -> regenerate so the ensemble survives new data
             from uncertainty import bootstrap_samples
             JOB.update(phase="bootstrapping",
@@ -881,6 +893,26 @@ def api_whatif():
           "final": round(p[2], 4), "champion": round(p[3], 4),
           "bronze": round(p[4], 4)}
          for t, p in probs.items()), key=lambda r: -r["champion"])})
+
+
+@app.get("/api/market")
+def api_market():
+    """Market anchor comparison: model vs de-vigged bookmaker champion odds + log-pool blend."""
+    if not MARKET_FILE.exists():
+        return jsonify({"present": False,
+                        "note": "no market snapshot - set THE_ODDS_API_KEY and run market_anchor.py"})
+    from market_anchor import log_pool
+    market = json.loads(MARKET_FILE.read_text())
+    model = {r["team"]: r["champion"] for r in (STATE["payload"] or {}).get("bracket", [])}
+    mk = market.get("champion_probs", {})
+    blend = log_pool(model, mk, 0.5)
+    rows = [{"team": t, "model": model.get(t), "market": mk.get(t),
+             "blend": round(blend[t], 5) if t in blend else None,
+             "edge": round(model[t] - mk[t], 4) if t in model and t in mk else None}
+            for t in sorted(set(model) | set(mk),
+                            key=lambda t: -(model.get(t) or mk.get(t) or 0))]
+    return jsonify({"present": True, "generated": market.get("generated"),
+                    "books": market.get("books"), "rows": rows})
 
 
 @app.get("/api/consensus")

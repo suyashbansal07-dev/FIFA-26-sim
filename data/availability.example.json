@@ -1,0 +1,8 @@
+{
+  "France": [
+    {"player": "Example Star", "value_share": 0.25, "note": "hamstring, out for tournament"}
+  ],
+  "England": [
+    {"player": "Example Defender", "value_share": 0.08, "note": "suspended one match"}
+  ]
+}

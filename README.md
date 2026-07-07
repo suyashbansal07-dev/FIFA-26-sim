@@ -129,6 +129,7 @@ aggregate under-goals signal to fix by blindly inflating rates.
 | `POST /api/refresh` | start async scrape → refit → re-simulate job (accepts knob overrides) |
 | `GET /api/status` | background job phase + last generated timestamp |
 | `GET/POST /api/backtest` | read / recompute walk-forward validation |
+| `GET /api/market` | market anchor: model vs de-vigged bookmaker odds + log-pool blend (needs `THE_ODDS_API_KEY`) |
 
 ## Project structure
 

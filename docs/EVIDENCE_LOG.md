@@ -499,3 +499,17 @@ Change:
 Decision: do not create a missing-starter model prior yet. There are no FIWC
 lineup rows to validate or apply it. Current usage is useful context, but
 starter-specific adjustments would be fake precision.
+
+## Backlog Closure (2026-07-06)
+
+- Market anchor built (`market_anchor.py`, `/api/market`, UI section): de-vigs
+  each bookmaker, averages implied champion odds, 50/50 log-pool blend shown as
+  a benchmark. Deliberately NOT a model input. Degrades to a clear note without
+  THE_ODDS_API_KEY. Devig/log-pool math unit-tested.
+- Manual availability layer (`availability.py` + `data/availability.json`):
+  missing-player value share (capped 0.5/team) subtracts from external strength,
+  riding the capped external-prior channel (weight <= 0.15). No file = no-op.
+  Unknown teams reported, not applied. Unit-tested.
+- Everything else from the backlog already landed earlier: bronze match sim,
+  counterfactual played-slot rewrites, shareable what-if URLs, gzip responses,
+  WC26_TOKEN bearer auth on mutating endpoints.

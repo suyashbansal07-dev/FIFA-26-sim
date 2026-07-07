@@ -292,6 +292,36 @@ def test_backtest_scoreline_calibration_metrics_are_recorded():
     assert sink["scoreline_logloss"][0] > 0
 
 
+def test_market_devig_and_log_pool():
+    from market_anchor import devig, log_pool
+    probs = devig({"A": 2.0, "B": 4.0, "C": 4.0})  # implied 0.5+0.25+0.25 = 1.0 margin-free
+    assert abs(sum(probs.values()) - 1.0) < 1e-12 and abs(probs["A"] - 0.5) < 1e-12
+    juiced = devig({"A": 1.8, "B": 3.6, "C": 3.6})  # 11% overround must normalize away
+    assert abs(sum(juiced.values()) - 1.0) < 1e-12 and abs(juiced["A"] - 0.5) < 1e-12
+    blend = log_pool({"A": 0.6, "B": 0.4}, {"A": 0.4, "B": 0.6}, 0.5)
+    assert abs(blend["A"] - 0.5) < 1e-12, "symmetric disagreement must blend to even"
+    assert log_pool({"A": 1.0}, {"B": 1.0}) == {}, "no common teams -> empty"
+
+
+def test_availability_penalty_rides_external_channel(tmp_path=None):
+    import json as _json
+    from availability import apply_availability
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory() as d:
+        p = Path(d) / "availability.json"
+        p.write_text(_json.dumps({"France": [{"player": "Star", "value_share": 0.25}],
+                                  "Atlantis": [{"player": "Ghost", "value_share": 0.9}]}))
+        strength = {"France": 1.2, "Spain": 1.1}
+        adj, meta = apply_availability(strength, p)
+        assert adj["France"] == 1.2 - 2.0 * 0.25 and adj["Spain"] == 1.1
+        assert meta["present"] and meta["unknown_teams"] == ["Atlantis"]
+        assert apply_availability(strength, Path(d) / "missing.json")[0] == strength, "no file = no-op"
+        p.write_text(_json.dumps({"France": [{"player": "A", "value_share": 0.4},
+                                             {"player": "B", "value_share": 0.4}]}))
+        adj2, _ = apply_availability(strength, p)
+        assert adj2["France"] == 1.2 - 2.0 * 0.5, "team share must cap at 0.5"
+
+
 def test_whatif_rejects_impossible_r16_override():
     from server import _validate_overrides
     bracket = {"r16": [{"id": "R16-1", "home": "Canada", "away": "Morocco"}],

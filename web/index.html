@@ -179,9 +179,16 @@
 
 <details open>
   <summary>Player / market layer</summary>
+  <div id="availabilityNote" class="mut"></div>
   <div id="externalMeta" class="mut"></div>
   <div id="usageMeta" class="mut"></div>
   <table id="externalTbl"></table>
+</details>
+
+<details>
+  <summary>Market anchor</summary>
+  <div id="marketMeta" class="mut">loading…</div>
+  <table id="marketTbl" style="max-width:520px"></table>
 </details>
 
 <footer>Dixon-Coles (1997) engine · AGPL-3.0 · model output, not betting advice ·
@@ -414,6 +421,28 @@ function renderRatings() {
        <td class="num">${r.attack.toFixed(2)}</td><td class="num">${r.defence.toFixed(2)}</td>
        <td class="num">${r.fifa_ranking ?? '—'}</td><td class="num">${money(r.top23_market_value)}</td>
        <td>${r.fiwc_impact_player || r.top_player || '—'}</td></tr>`).join('');
+}
+
+async function loadMarket() {
+  try {
+    const m = await j('/api/market');
+    if (!m.present) { $('marketMeta').textContent = m.note || 'no market snapshot'; $('marketTbl').innerHTML = ''; return; }
+    $('marketMeta').textContent = `${m.books} bookmaker books, de-vigged and averaged · ${m.generated} · blend = 50/50 log-pool · benchmark only, never a model input`;
+    $('marketTbl').innerHTML = `<tr><th>Team</th><th class="num">model</th><th class="num">market</th><th class="num">blend</th><th class="num">edge</th></tr>` +
+      m.rows.slice(0, 12).map(r => `<tr><td>${r.team}</td>
+        <td class="num">${r.model == null ? '—' : pct(r.model)}</td>
+        <td class="num">${r.market == null ? '—' : pct(r.market)}</td>
+        <td class="num">${r.blend == null ? '—' : pct(r.blend)}</td>
+        <td class="num">${r.edge == null ? '—' : (r.edge > 0 ? '+' : '') + (100 * r.edge).toFixed(1)}</td></tr>`).join('');
+  } catch (e) { $('marketMeta').textContent = 'market anchor unavailable: ' + e.message; }
+}
+
+function renderAvailability() {
+  const a = DATA.meta.availability || {};
+  if (!a.present) { $('availabilityNote').textContent = ''; return; }
+  const parts = Object.entries(a.applied).map(([t, v]) =>
+    `${t}: −${(100 * v.missing_value_share).toFixed(0)}% squad value (${v.players.join(', ')})`);
+  $('availabilityNote').textContent = 'availability adjustments · ' + parts.join(' · ');
 }
 
 function renderExternal() {
@@ -656,6 +685,8 @@ async function load() {
   renderStaticBracket(DATA.verdict, false);
   renderRatings();
   renderExternal();
+  renderAvailability();
+  loadMarket();
   renderUsageMeta();
   $('knobHL').value = DATA.meta.half_life_days;
   $('knobFW').value = DATA.meta.friendly_weight ?? 1;
