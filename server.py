@@ -33,7 +33,8 @@ from form_signals import DEFAULT_FORM_WEIGHT, build_recent_form_strength, form_r
 from forward_loop import update_forward_loop
 from live_signals import DEFAULT_LIVE_WEIGHT, build_live_context_strength, live_rate_adjustment
 from match_features import load_match_features
-from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SIMS, SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
+from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SCORELINE_DISPERSION, DEFAULT_SIMS,
+                    SAMPLERS, Simulator, dc_grid, fit_model, known_winners,
                     load_matches, markets, match_rates, resolved_fixtures, run_ensemble,
                     run_tournament, shootout_rates, team_params, verdict_bracket)
 
@@ -58,10 +59,12 @@ LOCK = threading.Lock()
 BACKTEST_LOCK = threading.Lock()
 CFG = {"sims": DEFAULT_SIMS, "half_life": 1100.0, "friendly_weight": 1.0,
        "goal_scale": DEFAULT_GOAL_SCALE, "external_weight": DEFAULT_EXTERNAL_WEIGHT,
+       "scoreline_dispersion": DEFAULT_SCORELINE_DISPERSION,
        "form_weight": DEFAULT_FORM_WEIGHT, "live_weight": DEFAULT_LIVE_WEIGHT,
        "years": 4.0, "sampler": "antithetic"}  # 1100d: sweep-validated, smallest OOS gap
 KNOB_RANGES = {"half_life": (100, 2000), "friendly_weight": (0.0, 1.0),
                "goal_scale": (0.8, 1.3), "external_weight": (0.0, 0.15),
+               "scoreline_dispersion": (0.0, 0.3),
                "form_weight": (0.0, 0.08), "live_weight": (0.0, 0.06),
                "sims": (10_000, DEFAULT_SIMS)}
 
@@ -460,7 +463,7 @@ def card(home, away, venue=""):
                           STATE.get("external_strength"), CFG["external_weight"],
                           STATE.get("form_strength"), CFG["form_weight"],
                           STATE.get("live_strength"), CFG["live_weight"])
-    g = dc_grid(lam, mu, rho)
+    g = dc_grid(lam, mu, rho, scoreline_dispersion=CFG["scoreline_dispersion"])
     h, d, a, o25, top = markets(g)
     return {"home": home, "away": away, "venue": venue or "neutral",
             "lam": round(lam, 3), "mu": round(mu, 3),
@@ -536,6 +539,7 @@ def refresh():
             probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
                                         bracket, known, CFG["sims"], CFG["sampler"],
                                         goal_scale=CFG["goal_scale"],
+                                        scoreline_dispersion=CFG["scoreline_dispersion"],
                                         external_strength=STATE["external_strength"],
                                         external_weight=CFG["external_weight"],
                                         form_strength=STATE["form_strength"],
@@ -546,6 +550,7 @@ def refresh():
         else:
             sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
                             goal_scale=CFG["goal_scale"],
+                            scoreline_dispersion=CFG["scoreline_dispersion"],
                             external_strength=STATE["external_strength"],
                             external_weight=CFG["external_weight"],
                             form_strength=STATE["form_strength"],
@@ -564,6 +569,7 @@ def refresh():
             fixtures.append(c)
         verdict_sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(26), pens=STATE["pens"],
                                 goal_scale=CFG["goal_scale"],
+                                scoreline_dispersion=CFG["scoreline_dispersion"],
                                 external_strength=STATE["external_strength"],
                                 external_weight=CFG["external_weight"],
                                 form_strength=STATE["form_strength"],
@@ -580,6 +586,7 @@ def refresh():
                      "hfa": round(hfa, 3), "rho": round(rho, 3),
                      "sims": CFG["sims"], "half_life_days": CFG["half_life"],
                      "friendly_weight": CFG["friendly_weight"], "goal_scale": CFG["goal_scale"],
+                     "scoreline_dispersion": CFG["scoreline_dispersion"],
                      "external_weight": CFG["external_weight"],
                      "form_weight": CFG["form_weight"],
                      "live_weight": CFG["live_weight"],
@@ -615,6 +622,7 @@ def _state_compatible(payload):
     return bool(payload and payload.get("bracket")
                 and all("bronze" in row for row in payload["bracket"])
                 and payload.get("verdict")
+                and "scoreline_dispersion" in payload.get("meta", {})
                 and "live_weight" in payload.get("meta", {}))
 
 
@@ -746,6 +754,7 @@ def api_sample():
         atk, dfn, hfa, rho = STATE["params"]
     sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
                     goal_scale=CFG["goal_scale"],
+                    scoreline_dispersion=CFG["scoreline_dispersion"],
                     external_strength=STATE.get("external_strength"),
                     external_weight=CFG["external_weight"],
                     form_strength=STATE.get("form_strength"),
@@ -766,7 +775,8 @@ def api_sample():
 
 def _apply_knobs(body):
     changed = {}
-    for k in ("half_life", "friendly_weight", "goal_scale", "external_weight", "form_weight", "live_weight", "sims"):
+    for k in ("half_life", "friendly_weight", "goal_scale", "scoreline_dispersion",
+              "external_weight", "form_weight", "live_weight", "sims"):
         if k in body:
             lo, hi = KNOB_RANGES[k]
             v = min(max(float(body[k]), lo), hi)
@@ -902,6 +912,7 @@ def api_whatif():
     if STATE["samples"]:
         probs, paths = run_ensemble(STATE["samples"]["samples"], STATE["pens"],
                                     bracket, known, sims, sampler, goal_scale=CFG["goal_scale"],
+                                    scoreline_dispersion=CFG["scoreline_dispersion"],
                                     external_strength=STATE.get("external_strength"),
                                     external_weight=CFG["external_weight"],
                                     form_strength=STATE.get("form_strength"),
@@ -911,6 +922,7 @@ def api_whatif():
     else:
         sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(), pens=STATE["pens"],
                         goal_scale=CFG["goal_scale"],
+                        scoreline_dispersion=CFG["scoreline_dispersion"],
                         external_strength=STATE.get("external_strength"),
                         external_weight=CFG["external_weight"],
                         form_strength=STATE.get("form_strength"),
@@ -920,6 +932,7 @@ def api_whatif():
         probs, paths = run_tournament(sim, bracket, known, sims, sampler, return_paths=True)
     verdict_sim = Simulator(atk, dfn, hfa, rho, np.random.default_rng(26), pens=STATE["pens"],
                             goal_scale=CFG["goal_scale"],
+                            scoreline_dispersion=CFG["scoreline_dispersion"],
                             external_strength=STATE.get("external_strength"),
                             external_weight=CFG["external_weight"],
                             form_strength=STATE.get("form_strength"),
@@ -978,6 +991,8 @@ def api_run_backtest():
         half_life = _clamp(float(body.get("half_life", CFG["half_life"])), *KNOB_RANGES["half_life"])
         friendly_weight = _clamp(float(body.get("friendly_weight", CFG["friendly_weight"])), *KNOB_RANGES["friendly_weight"])
         goal_scale = _clamp(float(body.get("goal_scale", CFG["goal_scale"])), *KNOB_RANGES["goal_scale"])
+        scoreline_dispersion = _clamp(float(body.get("scoreline_dispersion", CFG["scoreline_dispersion"])),
+                                      *KNOB_RANGES["scoreline_dispersion"])
         external_weight = _clamp(float(body.get("external_weight", CFG["external_weight"])), *KNOB_RANGES["external_weight"])
         form_weight = _clamp(float(body.get("form_weight", CFG["form_weight"])), *KNOB_RANGES["form_weight"])
         refit_days = _clamp(int(body.get("refit_days", 45)), 7, 90)
@@ -992,6 +1007,7 @@ def api_run_backtest():
             half_life=half_life,
             friendly_weight=friendly_weight,
             goal_scale=goal_scale,
+            scoreline_dispersion=scoreline_dispersion,
             external_weight=external_weight,
             form_weight=form_weight,
             verbose=False,
@@ -1011,12 +1027,14 @@ def main():
     ap.add_argument("--sims", type=int, default=DEFAULT_SIMS)
     ap.add_argument("--sampler", choices=SAMPLERS, default="antithetic")
     ap.add_argument("--external-weight", type=float, default=DEFAULT_EXTERNAL_WEIGHT)
+    ap.add_argument("--scoreline-dispersion", type=float, default=DEFAULT_SCORELINE_DISPERSION)
     ap.add_argument("--form-weight", type=float, default=DEFAULT_FORM_WEIGHT)
     ap.add_argument("--live-weight", type=float, default=DEFAULT_LIVE_WEIGHT)
     ap.add_argument("--auto-refresh-hours", type=float, default=0.25)
     args = ap.parse_args()
     CFG["sims"] = args.sims
     CFG["sampler"] = args.sampler
+    CFG["scoreline_dispersion"] = _clamp(args.scoreline_dispersion, *KNOB_RANGES["scoreline_dispersion"])
     CFG["external_weight"] = _clamp(args.external_weight, *KNOB_RANGES["external_weight"])
     CFG["form_weight"] = _clamp(args.form_weight, *KNOB_RANGES["form_weight"])
     CFG["live_weight"] = _clamp(args.live_weight, *KNOB_RANGES["live_weight"])
@@ -1027,6 +1045,7 @@ def main():
             or meta.get("half_life_days") != CFG["half_life"]
             or meta.get("friendly_weight") != CFG["friendly_weight"]
             or meta.get("goal_scale") != CFG["goal_scale"]
+            or meta.get("scoreline_dispersion") != CFG["scoreline_dispersion"]
             or meta.get("external_weight") != CFG["external_weight"]
             or meta.get("form_weight") != CFG["form_weight"]
             or meta.get("live_weight") != CFG["live_weight"]

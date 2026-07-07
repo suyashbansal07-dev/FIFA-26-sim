@@ -523,6 +523,28 @@ availability file in `meta.availability_input`; startup refreshes the bracket
 when that file changes, so manual injury/suspension updates cannot silently
 decorate stale odds.
 
+## Scoreline dispersion repair (2026-07-07)
+
+User concern: exact-score cards were too concentrated around 0-0, 1-0, 0-1,
+and 1-1. Raising `goal_scale` would inflate total goals, so I added a small
+scoreline-only tempo mixture: each grid averages low/normal/high match tempo
+with weights 25/50/25. This reduces exact-score overconfidence while preserving
+the fitted mean rates.
+
+Walk-forward check (`396` OOS matches, `half_life=1100`, `goal_scale=1.10`,
+`external_weight=0.15`, `form_weight=0.00`):
+
+| Score spread | RPS | Brier | Log-loss | Exact-score log-loss | Pred goals | Pred O2.5 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.00 | 0.1516 | 0.4825 | 0.8311 | 2.8903 | 2.951 | 0.534 |
+| 0.05 | 0.1516 | 0.4825 | 0.8311 | 2.8902 | 2.951 | 0.533 |
+| 0.10 | 0.1516 | 0.4825 | 0.8309 | 2.8899 | 2.951 | 0.532 |
+| 0.15 | 0.1516 | 0.4824 | 0.8307 | 2.8896 | 2.951 | 0.531 |
+
+Decision: default `scoreline_dispersion=0.10`. It moves exact-score sharpness
+in the right direction without changing the 1X2 metrics or aggregate goal
+level materially.
+
 ## Backlog Closure (2026-07-06)
 
 - Market anchor built (`market_anchor.py`, `/api/market`, UI section): de-vigs

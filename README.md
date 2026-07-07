@@ -108,8 +108,8 @@ Open <http://127.0.0.1:8026>.
 3. Use **Refresh** to scrape latest results, refit, run 1,000,000 paths, and
    append new forward forecasts.
 4. Expand **model knobs** for controlled experiments: half-life, friendly
-   weight, goal scale, external prior, form prior, live-context prior, sims, and
-   sampler.
+   weight, goal scale, score spread, external prior, form prior,
+   live-context prior, sims, and sampler.
 5. Tap a team in an unfinished slot to pin a what-if winner, then click
    **Recompute pinned**.
 6. Enable counterfactual mode only when intentionally rewriting already-played
@@ -157,6 +157,7 @@ flowchart LR
 | Ratings | Team attack, defence, home advantage, rho | compact, proven football scoring model |
 | Time decay | Exponential, default half-life 1100 days | recent signal without starving the fit |
 | Goal scale | Default 1.10 | reduces low-score overconservatism |
+| Score spread | Default 0.10 low/normal/high tempo mixture | reduces exact-score overconfidence without inflating total goals |
 | External prior | Rank, market value, squad depth, chemistry, caps/goals, active star usage, WC usage | richer team-strength signal |
 | Form prior | Opponent-adjusted recent form/xG, default weight 0.00 | wired but disabled by default after OOS sweep |
 | Live context prior | Current-WC result residuals, xG, and shot pressure, default weight 0.03 | momentum without hard-coded teams |
@@ -220,8 +221,9 @@ match day, then waits for enough settled samples before tuning priors.
   pre-match forecasts have settled.
 - Public lineups and injuries are not reliable enough for automatic
   missing-starter adjustments yet.
-- Exact scoreline shape is monitored separately from aggregate goals; do not
-  blindly inflate rates just because many modal scores are 0-0, 1-0, or 1-1.
+- Exact scoreline shape now uses a small tempo-spread mixture, but remains
+  monitored separately from aggregate goals; do not blindly inflate rates just
+  because many modal scores are 0-0, 1-0, or 1-1.
 - Optional market anchoring needs `THE_ODDS_API_KEY`; the core model does not.
 
 ## Data & Acknowledgements

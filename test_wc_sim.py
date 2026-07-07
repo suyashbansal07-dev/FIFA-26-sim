@@ -35,6 +35,15 @@ def test_grid_and_markets_sum_to_one():
     assert 0 < o25 < 1 and len(top) == 3
 
 
+def test_scoreline_dispersion_reduces_modal_score_overconfidence():
+    base = dc_grid(1.7, 1.2, -0.08)
+    spread = dc_grid(1.7, 1.2, -0.08, scoreline_dispersion=0.16)
+    totals = np.add.outer(np.arange(MAX_GOALS), np.arange(MAX_GOALS))
+    assert abs(spread.sum() - 1) < 1e-12
+    assert spread.max() < base.max()
+    assert abs(float((spread * totals).sum() - (base * totals).sum())) < 0.02
+
+
 def test_host_advantage_applies_only_at_home_venue():
     atk, dfn, hfa = {"A": 0.3, "B": 0.1}, {"A": -0.2, "B": -0.1}, 0.25
     lam_neutral, _ = match_rates(atk, dfn, hfa, "A", "B", "Elsewhere", goal_scale=1.0)
@@ -302,7 +311,8 @@ def test_backtest_scoreline_calibration_metrics_are_recorded():
                           "away_score": 1, "neutral": True, "outcome": 0}])
     keys = ("rps", "brier", "logloss", "fav_p", "fav_hit", "uniform", "freq",
             "pred_goals", "actual_goals", "pred_over25", "actual_over25",
-            "scoreline_logloss", "score_top1", "score_top3", "top_low_score")
+            "scoreline_logloss", "modal_score_prob", "score_top1", "score_top3",
+            "top_low_score")
     sink = {k: [] for k in keys} | {"skipped": 0, "_freq": np.full(3, 1 / 3)}
     _score_rows(rows, {"A": 0.1, "B": -0.1}, {"A": -0.1, "B": 0.1},
                 0.0, -0.05, sink, goal_scale=1.0)
@@ -311,6 +321,7 @@ def test_backtest_scoreline_calibration_metrics_are_recorded():
     assert sink["pred_goals"][0] > 0
     assert 0 <= sink["pred_over25"][0] <= 1
     assert sink["scoreline_logloss"][0] > 0
+    assert sink["modal_score_prob"][0] > 0
 
 
 def test_market_devig_and_log_pool():
@@ -371,6 +382,7 @@ def test_forward_loop_settles_only_pre_match_forecasts():
     from forward_loop import record_payload_forecasts, settle_forward_forecasts
     payload = {"meta": {"generated": "2026-07-01T00:00:00+00:00", "half_life_days": 550,
                         "friendly_weight": 1, "goal_scale": 1.1, "external_weight": 0.15,
+                        "scoreline_dispersion": 0.1,
                         "form_weight": 0.02, "live_weight": 0.03,
                         "sampler": "antithetic", "sims": 1000000,
                         "hfa": 0.2, "rho": -0.08},
@@ -386,6 +398,7 @@ def test_forward_loop_settles_only_pre_match_forecasts():
         record_payload_forecasts(payload, ledger, now=pd.Timestamp("2026-07-01", tz="UTC").to_pydatetime())
         rows = [json.loads(line) for line in ledger.read_text().splitlines()]
         assert rows[0]["model"]["external_weight"] == 0.15
+        assert rows[0]["model"]["scoreline_dispersion"] == 0.1
         assert rows[0]["model"]["form_weight"] == 0.02
         assert rows[0]["model"]["live_weight"] == 0.03
         assert rows[0]["model"]["sims"] == 1000000
@@ -401,6 +414,7 @@ def test_forward_loop_records_context_buckets():
     from forward_loop import record_payload_forecasts, settle_forward_forecasts
     payload = {"meta": {"generated": "2026-07-04T00:00:00+00:00", "half_life_days": 550,
                         "friendly_weight": 1, "goal_scale": 1.1, "external_weight": 0.15,
+                        "scoreline_dispersion": 0.1,
                         "form_weight": 0.0, "sampler": "antithetic", "sims": 1000000,
                         "hfa": 0.2, "rho": -0.08},
                "fixtures": [{"id": "R16-X", "date": "2026-07-05", "home": "A",
@@ -653,7 +667,8 @@ def test_load_state_attaches_external_strength_after_reload():
                 server.EXTERNAL_DIR / "project_team_enrichment.csv", index=False)
             (server.EXTERNAL_DIR / "external_meta.json").write_text(json.dumps({"source": "test"}))
             server.STATE_FILE.write_text(json.dumps({
-                "payload": {"meta": {"live_weight": 0.03}, "bracket": [{"team": "Canada", "bronze": 0.0}],
+                "payload": {"meta": {"live_weight": 0.03, "scoreline_dispersion": 0.1},
+                            "bracket": [{"team": "Canada", "bronze": 0.0}],
                             "ratings": [{"team": "Canada"}],
                             "verdict": {"champion": "Canada", "matches": []}},
                 "pens": {},
