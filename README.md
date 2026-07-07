@@ -1,60 +1,127 @@
-# WC26 — Dixon-Coles World Cup Simulator
+# WC26 Dixon-Coles World Cup Simulator
 
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/suyashbansal07-dev/FIFA-26-sim/actions/workflows/ci.yml/badge.svg)](https://github.com/suyashbansal07-dev/FIFA-26-sim/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-brightgreen.svg)](LICENSE)
 [![Model: Dixon-Coles](https://img.shields.io/badge/model-Dixon--Coles%20(1997)-orange.svg)](http://web.math.ku.dk/~rolf/teaching/thesis/DixonColes.pdf)
-[![Sims: 1M QMC](https://img.shields.io/badge/bracket%20sim-1M%20paths%2C%20QMC-purple.svg)](#simulation-engine)
+[![Sims: 1M QMC](https://img.shields.io/badge/bracket%20sim-1M%20paths%2C%20QMC-purple.svg)](#model-card)
 
-A statistically rigorous, self-updating prediction engine for the 2026 FIFA World
-Cup. Time-weighted Dixon-Coles bivariate Poisson ratings fit on four years of
-international results, a vectorized million-path Monte Carlo of the remaining
-bracket, honest uncertainty propagation, and a validation loop that scores every
-forecast out-of-sample — wrapped in a small Flask web UI.
+A self-updating 2026 FIFA World Cup prediction engine. It fits a time-weighted
+Dixon-Coles bivariate Poisson model on international results, enriches team
+strength with FIFA rankings, player/market/chemistry data, current World Cup
+usage, xG/stat momentum, and optional market odds, then runs a vectorized
+1,000,000-path knockout simulation behind a small Flask web UI.
 
-> Mid-tournament by design: group stage and Round of 32 are consumed as real
-> results; the sim starts from the live bracket state and re-calibrates after
-> every finished game.
+The app is mid-tournament by design: played knockout slots are consumed as
+facts, remaining slots are forecast from the current bracket state, and every
+pre-match forecast is written to a forward ledger for later calibration.
+
+## Screenshots
+
+![WC26 bracket dashboard](docs/assets/wc26-dashboard.png)
+
+![Case evidence and scoreline grid](docs/assets/wc26-case-evidence.png)
 
 ## Highlights
 
-- **Dixon-Coles core** — attack/defence/home-advantage/ρ via penaltyblog's MLE,
-  exponential time decay, neutral-venue-aware fitting, host-only home advantage.
-- **Million-path bracket sim** — vectorized Monte Carlo with variance-reduction
-  samplers (antithetic, Latin hypercube, scrambled Sobol QMC).
-- **Parameter-uncertainty ensemble** — bootstrap refits mixed into the sim so
-  championship tails reflect estimation error, not false confidence.
-- **Consensus bracket** — modal champion plus a coherent champion-anchored path,
-  individual slot odds for bracket verdicts, and most frequent complete finishes.
-- **Static verdict bracket** - instant forced-pick path from per-match knockout
-  advance probabilities, separate from champion-anchored Monte Carlo consensus.
-- **Self-updating** — dual scrapers (martj42 bulk + ESPN same-day top-up with
-  shootout winners); refresh re-scrapes, refits, and re-simulates in seconds.
-- **Evidence discipline** — walk-forward backtest with reliability bins and
-  overfit gap, an append-only forward-forecast ledger scored only pre-match
-  (no leakage), sample-gated calibration feedback, and a written
-  [evidence log](docs/EVIDENCE_LOG.md).
-- **Interactive loops** — shareable what-if winner pinning, counterfactual
-  played-slot rewrites, tunable half-life / friendly weight / goal-scale /
-  sampler knobs, any-matchup predictor with scoreline heatmap.
+- Dixon-Coles goal model with exponential time decay, neutral-venue handling,
+  host-only home advantage, and low-score tau correction.
+- 1,000,000-path bracket Monte Carlo with antithetic, Latin hypercube, Sobol,
+  and random samplers.
+- Bootstrap parameter ensemble so title odds include model-estimation
+  uncertainty instead of only scoreline noise.
+- External priors from FIFA rank, Transfermarkt value/depth, caps/goals,
+  chemistry, position balance, player availability, and current-WC usage.
+- Live context prior from current World Cup result residuals, xG, shots,
+  shots on target, corners, and possession.
+- Forward-safe evidence loop: pre-match ledger, post-result scoring, reliability
+  bins, and sample-gated calibration adjustments.
+- Browser UI with definitive verdict bracket, champion probabilities, scoreline
+  heatmaps, evidence panels, what-if pins, and counterfactual mode.
 
-## Quickstart
+## Setup Guide
+
+### Prerequisites
+
+- Python 3.13
+- Git
+- Network access for live refreshes
+
+### Clone and install
 
 ```powershell
-py -3.13 -m venv .venv                        # penaltyblog ships wheels up to cp313
+git clone https://github.com/suyashbansal07-dev/FIFA-26-sim.git
+cd FIFA-26-sim
+py -3.13 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python server.py                # scrape + fit + simulate, then serve
-# open http://127.0.0.1:8026
 ```
 
-Optional extras:
+Linux/macOS equivalent:
+
+```bash
+python3.13 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Optional environment
+
+Copy `.env.example` to `.env` only if you need optional features.
 
 ```powershell
-.venv\Scripts\python uncertainty.py --boots 16   # bootstrap ensemble (server auto-uses)
-.venv\Scripts\python fifa_rankings.py            # live FIFA ranking snapshot -> tracked CSV
-.venv\Scripts\python external_data.py            # player/market/chemistry/WC usage mart -> model + UI
-.venv\Scripts\python backtest.py                 # walk-forward validation -> UI
-.venv\Scripts\python backtest.py --sweep         # hyperparameter grid by OOS RPS
-.venv\Scripts\python test_wc_sim.py              # self-checks, no framework
+Copy-Item .env.example .env
+```
+
+- `THE_ODDS_API_KEY`: enables `/api/market` bookmaker-anchor output.
+- `WC26_TOKEN`: requires bearer auth for mutating POST endpoints when deployed.
+
+### Build local data artifacts
+
+The app can run from tracked data, but these commands refresh richer model
+inputs and validation artifacts:
+
+```powershell
+.venv\Scripts\python fifa_rankings.py
+.venv\Scripts\python external_data.py
+.venv\Scripts\python uncertainty.py --boots 16
+.venv\Scripts\python backtest.py
+.venv\Scripts\python test_wc_sim.py
+```
+
+Generated model data is intentionally ignored under `output/` and most
+`data/*.csv`.
+
+### Run the web app
+
+```powershell
+.venv\Scripts\python server.py --port 8026 --sims 1000000 --sampler antithetic --auto-refresh-hours 0.25
+```
+
+Open <http://127.0.0.1:8026>.
+
+## How To Use
+
+1. Read the bracket: green names are the current forced-pick verdict, and
+   unfinished-slot percentages are per-match advance probabilities.
+2. Click a match card to inspect the scoreline grid, xG/stat evidence, priors,
+   forward forecast, result status, and case notes.
+3. Use **Refresh** to scrape latest results, refit, run 1,000,000 paths, and
+   append new forward forecasts.
+4. Expand **model knobs** for controlled experiments: half-life, friendly
+   weight, goal scale, external prior, form prior, live-context prior, sims, and
+   sampler.
+5. Tap a team in an unfinished slot to pin a what-if winner, then click
+   **Recompute pinned**.
+6. Enable counterfactual mode only when intentionally rewriting already-played
+   slots.
+
+Useful API calls:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8026/api/data
+Invoke-RestMethod "http://127.0.0.1:8026/api/predict?home=Argentina&away=Spain&venue=United%20States"
+Invoke-RestMethod "http://127.0.0.1:8026/api/case?home=Canada&away=Morocco&venue=United%20States&date=2026-07-04"
+Invoke-RestMethod http://127.0.0.1:8026/api/backtest
 ```
 
 ## Architecture
@@ -63,111 +130,109 @@ Optional extras:
 flowchart LR
     A[martj42 bulk results] --> C[fetch_data.py]
     B[ESPN scoreboard API] --> C
-    B2[ESPN match stats / xG] --> MF[match_features.py]
+    B2[ESPN match stats and xG] --> MF[match_features.py]
     B3[Transfermarkt open dataset] --> X[external_data.py]
     B4[FIFA world rankings] --> X
-    C --> D[wc_sim.py<br/>Dixon-Coles MLE fit]
-    D --> E[10x10 tau-corrected grids]
-    U[uncertainty.py<br/>bootstrap refits] -.-> F
-    E --> F[vectorized bracket sim<br/>1M paths, QMC]
-    F --> G[consensus.py<br/>modal champion + path]
+    C --> D[wc_sim.py Dixon-Coles fit]
+    MF --> LS[live_signals.py current-WC context]
+    LS --> D
+    X --> D
+    D --> E[scoreline grids]
+    E --> F[1M bracket sim]
+    U[uncertainty.py bootstrap refits] -.-> F
+    F --> G[consensus.py]
     F --> H[server.py Flask API]
     G --> H
     H --> I[web/index.html]
-    H --> J[forward_loop.py<br/>pre-match ledger, scored on results]
-    K[backtest.py<br/>walk-forward RPS/Brier] --> H
-    MF -.diagnostics only.-> J
-    X --> D
-    X --> H
+    H --> J[forward_loop.py ledger and calibration]
+    MF --> J
+    K[backtest.py walk-forward validation] --> H
 ```
 
-### Model card
+### Model Card
 
 | Component | Choice | Why |
 |---|---|---|
-| Goals model | Bivariate Poisson + Dixon-Coles τ correction | low-score dependence (0-0/1-0/0-1/1-1) |
-| Ratings | attack αᵢ, defence βᵢ per team, global γ (home), ρ | spec §2.1–2.2 |
-| Time decay | exponential, half-life 1100 d (sweep-validated) | momentum without starving the fit |
-| Goal scale | 1.10 post-fit rate calibration | reduces low-score overconservatism out-of-sample |
-| External prior | capped player quality/depth/rank/chemistry rate adjustment, weight 0.15 | richer signal without letting market data dominate |
-| Form prior | opponent-adjusted recent-form/xG signal, default weight 0.00 | wired and tunable, but disabled by default after OOS sweep |
-| Venue | per-match neutral flag in fit; γ only for hosts at own venue | tournament realism |
-| Knockout ties | 30-min Poisson extra time, then Beta(5,5)-shrunk historical shootout rates | principled, not a coin flip |
-| Uncertainty | bootstrap parameter ensemble mixed into sim | point MLE is overconfident |
-| Training pool | FIFA-competition teams only | dataset carries CONIFA/regional sides via friendlies |
+| Goals model | Bivariate Poisson + Dixon-Coles tau correction | low-score dependence |
+| Ratings | Team attack, defence, home advantage, rho | compact, proven football scoring model |
+| Time decay | Exponential, default half-life 1100 days | recent signal without starving the fit |
+| Goal scale | Default 1.10 | reduces low-score overconservatism |
+| External prior | Rank, market value, squad depth, chemistry, caps/goals, WC usage | richer team-strength signal |
+| Form prior | Opponent-adjusted recent form/xG, default weight 0.00 | wired but disabled by default after OOS sweep |
+| Live context prior | Current-WC result residuals, xG, and shot pressure, default weight 0.03 | momentum without hard-coded teams |
+| Knockout ties | 30-minute Poisson extra time + Beta(5,5)-shrunk shootout rates | better than a coin flip |
+| Uncertainty | Bootstrap parameter ensemble | avoids false point-estimate confidence |
+| Training pool | FIFA-competition teams only | filters non-FIFA/regional sides |
 
-### Validation (latest)
+## Validation
 
-| Metric | Model | Uniform | Train-freq |
-|---|---:|---:|---:|
-| RPS current calibrated (392 OOS matches, Jan-Jul 2026) | **0.1512** | 0.2361 | 0.2211 |
-| Brier current calibrated | 0.4828 | - | - |
-| Log-loss current calibrated | 0.8316 | - | - |
-| Current calibrated gap | 0.1446 in-sample -> +0.0066 OOS | - | - |
+Run:
 
-In-sample RPS 0.1446 -> out-of-sample gap +0.0066 (mild, monitored). Reliability
-bins and the forward ledger (first settled knockout forecast: Morocco favorite
-at 45.1%, hit) live in the UI's *Model validation* section and
-[docs/EVIDENCE_LOG.md](docs/EVIDENCE_LOG.md).
+```powershell
+.venv\Scripts\python backtest.py
+```
 
-Scoreline calibration is now shown in the same validation panel. Current OOS
-totals: predicted goals `2.949` vs actual `2.804`, predicted over-2.5 `53.3%`
-vs actual `51.8%`, exact-score top-1 hit `16.6%`, top-3 hit `35.7%`. The common
-1-0 / 1-1 / 0-1 modal scores are therefore a scoreline-shape limitation, not an
-aggregate under-goals signal to fix by blindly inflating rates.
+The UI serves the latest `output/backtest.json` with RPS, Brier, log-loss,
+favorite reliability bins, in-sample/out-of-sample gap, and scoreline
+calibration. The forward loop separately scores only forecasts recorded before
+match day, then waits for enough settled samples before tuning priors.
 
 ## Web UI & API
 
 | Endpoint | What |
 |---|---|
-| `GET /api/data` | full payload: meta, fixtures + cards, bracket probabilities, verdict, consensus, ratings |
+| `GET /api/data` | Full payload: meta, fixtures, verdict, consensus, bracket odds, ratings |
 | `GET /api/predict?home=X&away=Y[&venue=C]` | Dixon-Coles card for any matchup |
-| `GET /api/case?home=X&away=Y[&venue=C][&date=YYYY-MM-DD]` | case evidence: result, xG/stats, forward forecast, external prior |
-| `GET /api/sample?home=X&away=Y` | sample one result (ET + pens on draws) |
-| `GET /api/consensus` | modal champion, slot odds, coherent path, top complete finishes |
-| `POST /api/whatif` | pin determined winners, re-simulate the bracket; `counterfactual=true` allows played-slot rewrites |
-| `POST /api/refresh` | start async scrape → refit → re-simulate job (accepts knob overrides) |
-| `GET /api/status` | background job phase + last generated timestamp |
-| `GET/POST /api/backtest` | read / recompute walk-forward validation |
-| `GET /api/market` | market anchor: model vs de-vigged bookmaker odds + log-pool blend (needs `THE_ODDS_API_KEY`) |
+| `GET /api/case?home=X&away=Y[&venue=C][&date=YYYY-MM-DD]` | Case evidence and diagnostics |
+| `GET /api/sample?home=X&away=Y` | Sample one scoreline, including ET and penalties on draws |
+| `GET /api/consensus` | Modal champion, slot odds, coherent path, top complete finishes |
+| `POST /api/whatif` | Pin winners and re-simulate; `counterfactual=true` rewrites played slots |
+| `POST /api/refresh` | Async scrape -> refit -> simulate job with knob overrides |
+| `GET /api/status` | Background job status and latest generated timestamp |
+| `GET/POST /api/backtest` | Read or recompute walk-forward validation |
+| `GET /api/market` | Optional model vs de-vigged bookmaker odds and log-pool blend |
 
-## Project structure
+## Project Structure
 
 | File | Role |
 |---|---|
-| `wc_sim.py` | model core: fit, grids, vectorized tournament sim, ensemble mixer, deterministic verdict |
-| `consensus.py` | joint-mode top paths + definitive champion + slot probabilities |
-| `uncertainty.py` | bootstrap refits → `output/param_samples.json` |
-| `server.py` | Flask API + refresh pipeline + auto-refresh loop |
-| `web/index.html` | single-file vanilla-JS UI |
-| `fetch_data.py` | scrapers: martj42 bulk + ESPN top-up (shootouts, aliases, UTC skew) |
-| `fifa_rankings.py` | live FIFA ranking sync from `fifa.com/en/world-rankings` |
-| `match_features.py` | ESPN match stats / xG ingestion (diagnostics only, forward-safe) |
-| `external_data.py` | Transfermarkt player, national-team, market, chemistry, FIFA-rank, and WC usage mart (ignored output) |
-| `external_signals.py` | capped model prior from top-11 quality, squad depth, FIFA rank, caps/goals, and chemistry |
-| `backtest.py` | walk-forward RPS/Brier/log-loss, scoreline calibration, reliability bins, `--sweep` |
-| `forward_loop.py` | append-only forecast ledger, scored pre-match-only, sample-gated calibration policy |
-| `diagnostics.py` | evidence-first bias reports |
-| `bracket_2026.json` | live bracket state (pairings, tree, venues, manual overrides) |
-| `docs/EVIDENCE_LOG.md` | every bias found, fix applied, and decision parked |
+| `wc_sim.py` | Fit, scoreline grids, tournament sim, ensemble mixer, verdict bracket |
+| `server.py` | Flask API, refresh pipeline, auto-refresh loop |
+| `web/index.html` | Single-file vanilla JavaScript UI |
+| `fetch_data.py` | martj42 results fetch + ESPN same-day top-up |
+| `fifa_rankings.py` | FIFA ranking sync |
+| `external_data.py` | Transfermarkt/player/rank/chemistry/WC-usage mart |
+| `external_signals.py` | External strength prior |
+| `match_features.py` | ESPN match stats and xG ingestion |
+| `live_signals.py` | Current-WC xG/stat/result-residual momentum prior |
+| `availability.py` | Manual availability adjustments |
+| `market_anchor.py` | Optional bookmaker odds anchor |
+| `uncertainty.py` | Bootstrap refits |
+| `backtest.py` | Walk-forward validation and sweeps |
+| `forward_loop.py` | Pre-match forecast ledger and calibration policy |
+| `diagnostics.py` | Evidence-first bias and case reports |
+| `bracket_2026.json` | Bracket tree, venues, and manual overrides |
+| `docs/EVIDENCE_LOG.md` | Bias checks, repairs, and parked decisions |
 
-## Roadmap
+## Current Limitations
 
-- **xG-blended ratings** — ingestion already live; blend activates once the
-  settled forward sample is large enough to validate a weight.
-- **Player/lineup layer** — missing-starter rating adjustments from public squad
-  data; only lands with calibration evidence, unlike attribute-sim toys.
+- Forward calibration is sample-gated; it will not auto-tune priors until enough
+  pre-match forecasts have settled.
+- Public lineups and injuries are not reliable enough for automatic
+  missing-starter adjustments yet.
+- Exact scoreline shape is monitored separately from aggregate goals; do not
+  blindly inflate rates just because many modal scores are 0-0, 1-0, or 1-1.
+- Optional market anchoring needs `THE_ODDS_API_KEY`; the core model does not.
 
-## Data & acknowledgements
+## Data & Acknowledgements
 
 - Results: [martj42/international_results](https://github.com/martj42/international_results) (CC0), ESPN public scoreboard API.
 - Rankings: [FIFA/Coca-Cola World Rankings](https://www.fifa.com/en/world-rankings).
-- Method: Dixon & Coles (1997), *Modelling Association Football Scores and
+- Method: Dixon and Coles (1997), *Modelling Association Football Scores and
   Inefficiencies in the Football Betting Market*, JRSS-C 46(2).
 - MLE engine: [penaltyblog](https://github.com/martineastwood/penaltyblog).
 
-## License & disclaimer
+## License & Disclaimer
 
-[AGPL-3.0](LICENSE) — run it, fork it, deploy it; hosted derivatives stay open.
-Probabilities are model outputs for education and analysis, **not betting
-advice**. The model cannot see injuries, lineups, or tactics (spec §5).
+[AGPL-3.0](LICENSE). Hosted derivatives must stay open under AGPL terms.
+Probabilities are model outputs for education and analysis, not betting advice.

@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a model, data, API, or UI bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include API output, screenshot, command output, or fixture details.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Commit or run timestamp
+      placeholder: "commit SHA or /api/data meta.generated"
+    validations:
+      required: false
