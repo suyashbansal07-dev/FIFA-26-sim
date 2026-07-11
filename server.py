@@ -29,7 +29,8 @@ from availability import apply_availability
 from backtest import write_backtest
 from consensus import build_consensus
 from external_signals import DEFAULT_EXTERNAL_WEIGHT, external_rate_adjustment, load_external_strength
-from form_signals import DEFAULT_FORM_WEIGHT, build_recent_form_strength, form_rate_adjustment
+from form_signals import (DEFAULT_FORM_WEIGHT, build_recent_form_strength,
+                          fitted_team_strength, form_rate_adjustment)
 from forward_loop import update_forward_loop
 from live_signals import DEFAULT_LIVE_WEIGHT, build_live_context_strength, live_rate_adjustment
 from match_features import load_match_features
@@ -196,10 +197,11 @@ def _attach_external(payload):
 def _load_form_strength(df=None):
     df = df if df is not None else load_matches(CFG["years"])
     features = load_match_features(ROOT)
+    atk, dfn, _, _ = STATE["params"]
     return build_recent_form_strength(
         df,
         features=features,
-        external_strength=STATE.get("external_strength"),
+        baseline_strength=fitted_team_strength(atk, dfn),
     )
 
 
@@ -453,7 +455,6 @@ def _pre_match_form_prior(home, away, day, df=None, features=None):
         df,
         as_of=day,
         features=features,
-        external_strength=STATE.get("external_strength"),
     )
     adj = form_rate_adjustment(home, away, strength, CFG["form_weight"])
     return _jsonable({

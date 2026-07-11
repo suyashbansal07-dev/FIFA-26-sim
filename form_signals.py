@@ -76,12 +76,19 @@ def _z_map(values):
     return {t: round(float(v), 4) for t, v in zip(teams, z)}
 
 
+def fitted_team_strength(attack, defence):
+    """Standardized team quality from a fitted pre-match Dixon-Coles model."""
+    teams = attack.keys() & defence.keys()
+    return _z_map({team: float(attack[team]) - float(defence[team]) for team in teams})
+
+
 def build_recent_form_strength(matches, as_of=None, window=6, features=None,
-                               external_strength=None, min_matches=2):
+                               baseline_strength=None, min_matches=2):
     """Opponent-adjusted form signal from matches strictly before as_of.
 
-    Uses result residual versus a rank/market expectation, plus small goal/xG
-    edges. Missing xG is neutral. Returned values are z-scored across teams.
+    Uses result residual versus the fitted pre-match team-strength expectation,
+    plus small goal/xG edges. Missing xG is neutral. Returned values are
+    z-scored across teams.
     """
     if matches is None or matches.empty:
         return {}, {"present": False, "note": "no matches"}
@@ -101,7 +108,7 @@ def build_recent_form_strength(matches, as_of=None, window=6, features=None,
                  (row.away_team, row.home_team, aw, hs, False))
         for team, opp, gf, ga, is_home in pairs:
             score = _result_score(gf, ga)
-            expected = _expected_score(team, opp, external_strength)
+            expected = _expected_score(team, opp, baseline_strength)
             gd_edge = float(np.clip((gf - ga) / 3.0, -1.0, 1.0))
             xg_edge = _xg_edge(feat, row.home_team, row.away_team, is_home)
             stat_edge = _stat_pressure_edge(feat, is_home)
@@ -117,6 +124,7 @@ def build_recent_form_strength(matches, as_of=None, window=6, features=None,
         raw[team] = float(np.average([r["quality"] for r in recent], weights=weights))
     strength = _z_map(raw)
     return strength, {"present": True, "rows": len(strength), "window": window,
+                      "baseline": "fitted_dixon_coles_team_strength" if baseline_strength else "neutral",
                       "as_of": str(pd.Timestamp(as_of).date()) if as_of is not None else None}
 
 

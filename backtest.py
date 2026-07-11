@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from external_signals import DEFAULT_EXTERNAL_WEIGHT, load_external_strength
-from form_signals import DEFAULT_FORM_WEIGHT, build_recent_form_strength
+from form_signals import DEFAULT_FORM_WEIGHT, build_recent_form_strength, fitted_team_strength
 from match_features import load_match_features
 from wc_sim import (DEFAULT_GOAL_SCALE, DEFAULT_SCORELINE_DISPERSION, dc_grid,
                     fit_model, load_matches, match_rates, team_params)
@@ -115,8 +115,9 @@ def run_backtest(df, start, refit_days, train_years, half_life, friendly_weight,
         atk, dfn, hfa, rho = team_params(fit_model(train, half_life, friendly_weight))
         freq = train["outcome"].value_counts(normalize=True).reindex([0, 1, 2]).fillna(0).to_numpy()
         oos["_freq"] = ins["_freq"] = freq
-        form_strength, _ = build_recent_form_strength(train, as_of=block, features=features,
-                                                      external_strength=external_strength)
+        form_strength, _ = build_recent_form_strength(
+            train, as_of=block, features=features,
+            baseline_strength=fitted_team_strength(atk, dfn))
         _score_rows(test, atk, dfn, hfa, rho, oos, goal_scale, scoreline_dispersion,
                     external_strength, external_weight,
                     form_strength, form_weight)

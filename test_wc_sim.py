@@ -204,12 +204,21 @@ def test_form_strength_rewards_opponent_adjusted_recent_run():
         {"date": "2026-06-05", "home_team": "Favorite", "away_team": "Weak",
          "home_score": 0, "away_score": 0},
     ])
-    external = {"Elite": 1.8, "Strong": 1.0, "Favorite": 0.7,
+    baseline = {"Elite": 1.8, "Strong": 1.0, "Favorite": 0.7,
                 "Underdog": -0.7, "Weak": -1.0}
-    strength, meta = build_recent_form_strength(rows, external_strength=external)
+    strength, meta = build_recent_form_strength(rows, baseline_strength=baseline)
     assert meta["rows"] >= 2
     assert strength["Underdog"] > strength["Favorite"]
     assert form_rate_adjustment("Underdog", "Favorite", strength, 0.04) > 0
+
+
+def test_fitted_team_strength_combines_attack_and_defence():
+    from form_signals import fitted_team_strength
+    strength = fitted_team_strength(
+        {"Complete": 0.6, "AttackOnly": 0.8, "Weak": -0.3},
+        {"Complete": -0.5, "AttackOnly": 0.4, "Weak": 0.2},
+    )
+    assert strength["Complete"] > strength["AttackOnly"] > strength["Weak"]
 
 
 def test_form_strength_uses_prior_match_stat_pressure():

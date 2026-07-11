@@ -22,7 +22,8 @@ from scipy.stats import poisson, qmc
 
 from external_signals import (DEFAULT_EXTERNAL_WEIGHT, apply_external_prior,
                               load_external_strength)
-from form_signals import DEFAULT_FORM_WEIGHT, apply_form_prior, build_recent_form_strength
+from form_signals import (DEFAULT_FORM_WEIGHT, apply_form_prior,
+                          build_recent_form_strength, fitted_team_strength)
 from live_signals import DEFAULT_LIVE_WEIGHT, apply_live_prior, build_live_context_strength
 from match_features import load_match_features
 
@@ -462,7 +463,8 @@ def main():
     external_strength, external_meta = load_external_strength()
     if args.external_weight and external_strength:
         print(f"external strength prior: {external_meta['rows']} teams, weight {args.external_weight:.3f}")
-    form_strength, form_meta = build_recent_form_strength(df, external_strength=external_strength)
+    form_strength, form_meta = build_recent_form_strength(
+        df, baseline_strength=fitted_team_strength(atk, dfn))
     if args.form_weight and form_strength:
         print(f"recent-form prior: {form_meta['rows']} teams, weight {args.form_weight:.3f}")
     live_strength, live_meta = build_live_context_strength(

@@ -580,3 +580,31 @@ level materially.
 - Everything else from the backlog already landed earlier: bronze match sim,
   counterfactual played-slot rewrites, shareable what-if URLs, gzip responses,
   WC26_TOKEN bearer auth on mutating endpoints.
+
+## Forward-safe historical-form repair (2026-07-11)
+
+The historical form engine previously measured result residuals against the
+latest FIFA/market snapshot even inside old walk-forward blocks. That leaked
+future team information into the form signal. Form expectations now use the
+Dixon-Coles attack/defence strengths fitted only on each block's training data.
+Production and CLI forecasts use the corresponding current fitted strengths;
+historical case diagnostics use a neutral expectation when no period-correct
+strength snapshot exists.
+
+Sensitivity check (`400` OOS matches, `half_life=1100`, `goal_scale=1.10`,
+`external_weight=0.15`, `scoreline_dispersion=0.10`):
+
+| Form weight | RPS | Brier | Log-loss | In-sample RPS | OOS gap |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| -0.02 | 0.1513 | 0.4819 | 0.8302 | 0.1494 | +0.0019 |
+| 0.00 | 0.1513 | 0.4820 | 0.8302 | 0.1445 | +0.0068 |
+| 0.01 | 0.1515 | 0.4823 | 0.8306 | 0.1422 | +0.0093 |
+| 0.02 | 0.1517 | 0.4828 | 0.8312 | 0.1400 | +0.0117 |
+| 0.04 | 0.1523 | 0.4843 | 0.8332 | 0.1359 | +0.0164 |
+| 0.08 | 0.1532 | 0.4864 | 0.8367 | 0.1319 | +0.0213 |
+
+Decision: keep `DEFAULT_FORM_WEIGHT=0.0`. Positive result-form momentum degrades
+all OOS headline metrics and widens the overfit gap. The negative sensitivity
+looks like mean reversion but does not improve primary RPS or log-loss, so it is
+not mislabeled and enabled as momentum. Current-tournament xG/stat momentum
+continues through the separately confidence-shrunk live-context engine.
