@@ -79,6 +79,41 @@ def test_external_strength_uses_rank_only_fallback_without_fake_player_data():
     assert strength["B"] < strength["Cape Verde"] < strength["A"]
 
 
+def test_external_table_cache_reuses_fresh_file_and_refreshes_atomically():
+    import io
+    import external_data
+    with TemporaryDirectory() as d:
+        root = Path(d)
+        cache = root / "cache"
+        cache.mkdir()
+        dst = cache / "players.csv.gz"
+        dst.write_bytes(b"old")
+        old_open = external_data.urllib.request.urlopen
+        calls = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        external_data.urllib.request.urlopen = lambda *args, **kwargs: (
+            calls.append(args[0]) or Response(b"new"))
+        try:
+            external_data._table_path("players", root, max_age_hours=24)
+            assert not calls and dst.read_bytes() == b"old"
+            external_data._table_path("players", root, max_age_hours=0)
+            assert len(calls) == 1 and dst.read_bytes() == b"new"
+            assert not (cache / "players.csv.gz.tmp").exists()
+            external_data.urllib.request.urlopen = lambda *args, **kwargs: (_ for _ in ()).throw(
+                OSError("source unavailable"))
+            external_data._table_path("players", root, max_age_hours=0)
+            assert dst.read_bytes() == b"new"
+        finally:
+            external_data.urllib.request.urlopen = old_open
+
+
 def test_external_strength_uses_quality_depth_and_chemistry():
     from external_signals import build_external_strength
     rows = pd.DataFrame([
@@ -204,12 +239,21 @@ def test_form_strength_rewards_opponent_adjusted_recent_run():
         {"date": "2026-06-05", "home_team": "Favorite", "away_team": "Weak",
          "home_score": 0, "away_score": 0},
     ])
-    external = {"Elite": 1.8, "Strong": 1.0, "Favorite": 0.7,
+    baseline = {"Elite": 1.8, "Strong": 1.0, "Favorite": 0.7,
                 "Underdog": -0.7, "Weak": -1.0}
-    strength, meta = build_recent_form_strength(rows, external_strength=external)
+    strength, meta = build_recent_form_strength(rows, baseline_strength=baseline)
     assert meta["rows"] >= 2
     assert strength["Underdog"] > strength["Favorite"]
     assert form_rate_adjustment("Underdog", "Favorite", strength, 0.04) > 0
+
+
+def test_fitted_team_strength_combines_attack_and_defence():
+    from form_signals import fitted_team_strength
+    strength = fitted_team_strength(
+        {"Complete": 0.6, "AttackOnly": 0.8, "Weak": -0.3},
+        {"Complete": -0.5, "AttackOnly": 0.4, "Weak": 0.2},
+    )
+    assert strength["Complete"] > strength["AttackOnly"] > strength["Weak"]
 
 
 def test_form_strength_uses_prior_match_stat_pressure():
@@ -365,6 +409,47 @@ def test_availability_penalty_rides_external_channel(tmp_path=None):
                                              {"player": "B", "value_share": 0.4}]}))
         adj2, _ = apply_availability(strength, p)
         assert adj2["France"] == 1.2 - 2.0 * 0.5, "team share must cap at 0.5"
+        q = Path(d) / "lineup.json"
+        q.write_text(_json.dumps({"France": [{"player": "A", "value_share": 0.2}]}))
+        adj3, _ = apply_availability(strength, (p, q))
+        assert adj3["France"] == adj2["France"], "same player must not be counted twice"
+
+
+def test_espn_summary_extracts_confirmed_player_starters():
+    from lineup_signals import player_rows_from_summary
+    event = {"id": "7", "date": "2026-07-11T21:00Z",
+             "status": {"type": {"name": "STATUS_SCHEDULED"}}}
+    rosters = []
+    for side, team in (("home", "Norway"), ("away", "England")):
+        players = [{"starter": True, "athlete": {"id": str(i), "displayName": f"{team} {i}"},
+                    "position": {"displayName": "Forward"}, "formationPlace": str(i),
+                    "stats": [{"name": "appearances", "value": 0}]}
+                   for i in range(11)]
+        rosters.append({"homeAway": side, "team": {"displayName": team},
+                        "formation": "4-3-3", "roster": players})
+    rows = player_rows_from_summary(event, {"rosters": rosters})
+    assert len(rows) == 22 and all(row["lineup_confirmed"] for row in rows)
+    assert sum(row["starter"] for row in rows if row["team"] == "Norway") == 11
+
+
+def test_confirmed_lineup_penalizes_only_net_recent_core_shortfall():
+    from lineup_signals import build_confirmed_lineup_availability
+    rows = []
+    for event_id, day in (("1", "2026-07-01"), ("2", "2026-07-05")):
+        rows.extend({"date": day, "espn_event_id": event_id, "event_status": "STATUS_FULL_TIME",
+                     "team": "A", "player": f"Core {i}", "starter": True,
+                     "lineup_confirmed": True} for i in range(11))
+    rows.extend({"date": "2026-07-11", "espn_event_id": "3", "event_status": "STATUS_SCHEDULED",
+                 "team": "A", "player": player, "starter": True, "lineup_confirmed": True}
+                for player in [*(f"Core {i}" for i in range(10)), "Replacement"])
+    pool = pd.DataFrame([{"team": "A", "player": f"Core {i}", "position": "Attack",
+                          "market_value_in_eur": 10} for i in range(11)]
+                        + [{"team": "A", "player": "Replacement", "position": "Attack",
+                            "market_value_in_eur": 1}])
+    mart = pd.DataFrame([{"team": "A", "top23_market_value": 200}])
+    availability, meta = build_confirmed_lineup_availability(pd.DataFrame(rows), pool, mart)
+    assert meta["present"] and [entry["player"] for entry in availability["A"]] == ["Core 10"]
+    assert abs(sum(entry["value_share"] for entry in availability["A"]) - 0.045) < 1e-9
 
 
 def test_whatif_rejects_impossible_r16_override():
@@ -569,8 +654,22 @@ def test_server_applies_forward_calibration_once():
             assert out["applied"] and out["before"] == 0.12 and out["after"] == 0.13
             assert out["knobs"]["live_weight"]["before"] == 0.03
             assert out["knobs"]["live_weight"]["after"] == 0.035
+            server.CFG["external_weight"] = 0.12
+            server.CFG["live_weight"] = 0.03
             again = server._apply_forward_calibration()
             assert not again["applied"] and again["reason"] == "already applied"
+            assert again["restored"]
+            assert server.CFG["external_weight"] == 0.13
+            assert abs(server.CFG["live_weight"] - 0.035) < 1e-12
+
+            server.FORWARD_CALIBRATION.write_text(json.dumps({
+                "generated": "g-hold-after",
+                "calibration_policy": {"action": "hold", "reason": "need more", "settled": 11},
+            }))
+            server.CFG["external_weight"] = 0.12
+            server.CFG["live_weight"] = 0.03
+            held = server._apply_forward_calibration()
+            assert held["restored"] and held["reason"] == "need more"
             assert server.CFG["external_weight"] == 0.13
             assert abs(server.CFG["live_weight"] - 0.035) < 1e-12
         finally:
@@ -578,6 +677,48 @@ def test_server_applies_forward_calibration_once():
             server.FORWARD_CALIBRATION_APPLIED = old_applied
             server.CFG["external_weight"] = old_weight
             server.CFG["live_weight"] = old_live_weight
+
+
+def test_refresh_job_builds_uncertainty_in_one_refresh_pass():
+    import server
+    old_refresh = server.refresh
+    old_job = dict(server.JOB)
+    calls = []
+    try:
+        server.refresh = lambda **kwargs: calls.append(kwargs)
+        server._run_refresh_job()
+        assert calls == [{"ensure_uncertainty": True}]
+        assert server.JOB["phase"] == "idle"
+    finally:
+        server.refresh = old_refresh
+        server.JOB.clear()
+        server.JOB.update(old_job)
+
+
+def test_regenerate_samples_writes_current_payload():
+    import json
+    import server
+    import uncertainty
+    with TemporaryDirectory() as d:
+        old_file = server.SAMPLES_FILE
+        old_bootstrap = uncertainty.bootstrap_samples
+        server.SAMPLES_FILE = Path(d) / "param_samples.json"
+        uncertainty.bootstrap_samples = lambda *args, **kwargs: [{
+            "attack": {"A": 0.1, "B": -0.1},
+            "defence": {"A": -0.1, "B": 0.1},
+            "hfa": 0.2,
+            "rho": -0.08,
+        }]
+        try:
+            df = pd.DataFrame({"date": pd.to_datetime(["2026-07-10"])})
+            bracket = {"r16": [{"home": "A", "away": "B"}]}
+            payload = server._regenerate_samples(df, bracket, boots=1)
+            written = json.loads(server.SAMPLES_FILE.read_text())
+            assert payload == written
+            assert payload["boots"] == 1 and payload["data_max_date"] == "2026-07-10"
+        finally:
+            server.SAMPLES_FILE = old_file
+            uncertainty.bootstrap_samples = old_bootstrap
 
 
 def test_match_feature_extracts_stats_and_xg_from_espn_shapes():

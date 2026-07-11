@@ -13,6 +13,8 @@ __pycache__/
 
 data/*.csv
 !data/fifa_rankings_latest.csv
+data/lineup_availability.json
+data/lineup_availability_meta.json
 output/*
 workspace/
 

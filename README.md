@@ -99,6 +99,10 @@ Generated model data is intentionally ignored under `output/` and most
 
 Open <http://127.0.0.1:8026>.
 
+When a compatible cache is stale, the server keeps it available while one
+background pass refreshes data, refits 16 bootstrap samples, and runs the
+million-path ensemble. A first run without any cache still builds synchronously.
+
 ## How To Use
 
 1. Read the bracket: green names are the current forced-pick verdict, and
@@ -205,6 +209,7 @@ match day, then waits for enough settled samples before tuning priors.
 | `external_data.py` | Transfermarkt/player/rank/chemistry/WC-usage mart |
 | `external_signals.py` | External strength prior |
 | `match_features.py` | ESPN match stats and xG ingestion |
+| `lineup_signals.py` | ESPN player history and confirmed-XI downside adjustments |
 | `live_signals.py` | Current-WC xG/stat/result-residual momentum prior |
 | `availability.py` | Manual availability adjustments |
 | `market_anchor.py` | Optional bookmaker odds anchor |
@@ -219,8 +224,12 @@ match day, then waits for enough settled samples before tuning priors.
 
 - Forward calibration is sample-gated; it will not auto-tune priors until enough
   pre-match forecasts have settled.
-- Public lineups and injuries are not reliable enough for automatic
-  missing-starter adjustments yet.
+- Confirmed ESPN starting XIs trigger value-aware missing-core downside
+  adjustments before kickoff. Earlier injury/projection inference remains
+  manual because an unconfirmed absence is not a fact.
+- Player roles still lack validated skill attributes and tactical matchup
+  interactions; current player signals use market value, starts, usage, and
+  observed tournament production.
 - Exact scoreline shape now uses a small tempo-spread mixture, but remains
   monitored separately from aggregate goals; do not blindly inflate rates just
   because many modal scores are 0-0, 1-0, or 1-1.

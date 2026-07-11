@@ -580,3 +580,99 @@ level materially.
 - Everything else from the backlog already landed earlier: bronze match sim,
   counterfactual played-slot rewrites, shareable what-if URLs, gzip responses,
   WC26_TOKEN bearer auth on mutating endpoints.
+
+## Forward-safe historical-form repair (2026-07-11)
+
+The historical form engine previously measured result residuals against the
+latest FIFA/market snapshot even inside old walk-forward blocks. That leaked
+future team information into the form signal. Form expectations now use the
+Dixon-Coles attack/defence strengths fitted only on each block's training data.
+Production and CLI forecasts use the corresponding current fitted strengths;
+historical case diagnostics use a neutral expectation when no period-correct
+strength snapshot exists.
+
+Sensitivity check (`400` OOS matches, `half_life=1100`, `goal_scale=1.10`,
+`external_weight=0.15`, `scoreline_dispersion=0.10`):
+
+| Form weight | RPS | Brier | Log-loss | In-sample RPS | OOS gap |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| -0.02 | 0.1513 | 0.4819 | 0.8302 | 0.1494 | +0.0019 |
+| 0.00 | 0.1513 | 0.4820 | 0.8302 | 0.1445 | +0.0068 |
+| 0.01 | 0.1515 | 0.4823 | 0.8306 | 0.1422 | +0.0093 |
+| 0.02 | 0.1517 | 0.4828 | 0.8312 | 0.1400 | +0.0117 |
+| 0.04 | 0.1523 | 0.4843 | 0.8332 | 0.1359 | +0.0164 |
+| 0.08 | 0.1532 | 0.4864 | 0.8367 | 0.1319 | +0.0213 |
+
+Decision: keep `DEFAULT_FORM_WEIGHT=0.0`. Positive result-form momentum degrades
+all OOS headline metrics and widens the overfit gap. The negative sensitivity
+looks like mean reversion but does not improve primary RPS or log-loss, so it is
+not mislabeled and enabled as momentum. Current-tournament xG/stat momentum
+continues through the separately confidence-shrunk live-context engine.
+
+## Single-pass uncertainty refresh (2026-07-11)
+
+Runtime inspection found a stale `param_samples.json`, so the live million-path
+simulation reported `uncertainty.mode=point-estimate`. The background repair
+path first ran a full point-estimate tournament, then 16 bootstrap refits, then
+another full tournament. Cold stale-cache startup also waited for the first
+full simulation before binding Flask.
+
+Repair:
+
+- background refresh now fetches, fits, regenerates stale bootstrap parameters,
+  and runs the ensemble once;
+- a compatible stale cache is served immediately while that pass runs;
+- a missing cache still builds synchronously so API handlers never receive an
+  empty payload;
+- sample metadata is written before simulation and covered by focused tests.
+
+This changes runtime orchestration, not model probabilities. Sixteen refits
+remain a coarse empirical parameter distribution; convergence diagnostics and
+replicated scrambled-Sobol error estimates remain separate limitations.
+
+Live proof after the repair run:
+
+- `POST /api/refresh`: background job entered `bootstrapping`;
+- `GET /api/status`: job returned to `idle` with
+  `uncertainty={"mode":"bootstrap-ensemble","boots":16}`;
+- cached payload remained available while refits ran.
+
+## Durable forward-calibration state (2026-07-11)
+
+Accepted forward-loop nudges were stored with a report id, but process restart
+reset runtime knobs to CLI defaults. The matching report was then classified as
+already applied, so its accepted values were not restored. A later `hold`
+report had the same loss of state.
+
+The server now restores the last validated absolute knob values before reading
+the newest policy. A new report applies its bounded delta on top of those values;
+the same report is never applied twice; `hold` preserves prior adjustments.
+Malformed or unsupported persisted knobs are ignored and all restored values
+are clamped to the existing configured ranges. Restart, duplicate-report, and
+hold-policy behavior are covered by the self-check suite.
+
+## Confirmed-lineup player engine (2026-07-11)
+
+The Transfermarkt `game_lineups` snapshot still contained zero World Cup starts,
+but ESPN match summaries expose player identities, starter flags, positions,
+formations, substitutions, and match stats. A new ingestion module persists
+those rows and feeds only confirmed scheduled-match XIs into availability.
+
+Live ingestion proof:
+
+- `5,015` player-match rows across `98` completed tournament events;
+- `0` confirmed upcoming teams at collection time, so the adjustment was an
+  honest no-op before lineups were announced;
+- recent expected cores use only completed prior matches;
+- a confirmed XI is compared player by player with that core using the existing
+  market-value mart; only net downside is emitted, capped by the existing
+  availability channel, with no speculative lineup boost;
+- manual and generated absences deduplicate by player name;
+- in-progress/completed lineups cannot enter pre-match adjustments;
+- fetch failure clears generated penalties rather than carrying a stale XI into
+  another match.
+
+The upstream Transfermarkt R2 certificate was expired during refresh. The
+cache layer now attempts atomic 24-hour refreshes and safely retains the last
+good files on failure; TLS verification remains enabled. The official Kaggle
+mirror was older than the July 5 local snapshot, so it was not substituted.

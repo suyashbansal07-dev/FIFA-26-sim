@@ -2,7 +2,8 @@
 
 ESPN's WC API carries completed-match team stats in the scoreboard payload and
 xG-ish team totals via summary leader xGC. These are post-match observations:
-diagnostics may use them, forecasts do not.
+diagnostics and strictly prior-match form/live-context signals may use them;
+the current match never may.
 """
 from __future__ import annotations
 
