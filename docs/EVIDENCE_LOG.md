@@ -650,3 +650,29 @@ the same report is never applied twice; `hold` preserves prior adjustments.
 Malformed or unsupported persisted knobs are ignored and all restored values
 are clamped to the existing configured ranges. Restart, duplicate-report, and
 hold-policy behavior are covered by the self-check suite.
+
+## Confirmed-lineup player engine (2026-07-11)
+
+The Transfermarkt `game_lineups` snapshot still contained zero World Cup starts,
+but ESPN match summaries expose player identities, starter flags, positions,
+formations, substitutions, and match stats. A new ingestion module persists
+those rows and feeds only confirmed scheduled-match XIs into availability.
+
+Live ingestion proof:
+
+- `5,015` player-match rows across `98` completed tournament events;
+- `0` confirmed upcoming teams at collection time, so the adjustment was an
+  honest no-op before lineups were announced;
+- recent expected cores use only completed prior matches;
+- a confirmed XI is compared player by player with that core using the existing
+  market-value mart; only net downside is emitted, capped by the existing
+  availability channel, with no speculative lineup boost;
+- manual and generated absences deduplicate by player name;
+- in-progress/completed lineups cannot enter pre-match adjustments;
+- fetch failure clears generated penalties rather than carrying a stale XI into
+  another match.
+
+The upstream Transfermarkt R2 certificate was expired during refresh. The
+cache layer now attempts atomic 24-hour refreshes and safely retains the last
+good files on failure; TLS verification remains enabled. The official Kaggle
+mirror was older than the July 5 local snapshot, so it was not substituted.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,18 +36,31 @@ def _sql_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace("'", "''")
 
 
-def _table_path(name, out_dir):
+def _table_path(name, out_dir, max_age_hours=24.0):
     cache = out_dir / "cache"
     cache.mkdir(parents=True, exist_ok=True)
     dst = cache / f"{name}.csv.gz"
-    if not dst.exists():
+    age_hours = ((datetime.now(timezone.utc).timestamp() - dst.stat().st_mtime) / 3600
+                 if dst.exists() else float("inf"))
+    if max_age_hours <= 0 or age_hours >= max_age_hours:
         req = urllib.request.Request(TABLES[name], headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            dst.write_bytes(r.read())
+        tmp = dst.with_suffix(dst.suffix + ".tmp")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as response, tmp.open("wb") as sink:
+                shutil.copyfileobj(response, sink)
+            tmp.replace(dst)
+        except Exception as exc:
+            if not dst.exists():
+                raise
+            print(f"{name} refresh failed; using cached source: {exc}")
+        finally:
+            if tmp.exists():
+                tmp.unlink()
     return _sql_path(dst)
 
 
-def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
+def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False,
+                        cache_hours=24.0):
     out_dir.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect()
     try:
@@ -54,8 +68,8 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
     except Exception:
         con.sql("LOAD httpfs;")
 
-    con.sql(f"create or replace temp view players as select * from read_csv_auto('{_table_path('players', out_dir)}')")
-    con.sql(f"create or replace temp view national_teams as select * from read_csv_auto('{_table_path('national_teams', out_dir)}')")
+    con.sql(f"create or replace temp view players as select * from read_csv_auto('{_table_path('players', out_dir, cache_hours)}')")
+    con.sql(f"create or replace temp view national_teams as select * from read_csv_auto('{_table_path('national_teams', out_dir, cache_hours)}')")
     alias_rows = ", ".join(
         f"('{k.replace("'", "''")}', '{v.replace("'", "''")}')" for k, v in TEAM_ALIASES.items()
     )
@@ -205,11 +219,11 @@ def build_external_mart(start="2026-06-01", out_dir=OUT, include_usage=False):
         where fr.team is not null and ts.team is null
     """)
     if include_usage:
-        con.sql(f"create or replace temp view games as select * from read_csv_auto('{_table_path('games', out_dir)}')")
-        con.sql(f"create or replace temp view appearances as select * from read_csv_auto('{_table_path('appearances', out_dir)}')")
+        con.sql(f"create or replace temp view games as select * from read_csv_auto('{_table_path('games', out_dir, cache_hours)}')")
+        con.sql(f"create or replace temp view appearances as select * from read_csv_auto('{_table_path('appearances', out_dir, cache_hours)}')")
         con.sql(
             "create or replace temp view game_lineups_raw as "
-            f"select * from read_csv_auto('{_table_path('game_lineups', out_dir)}', "
+            f"select * from read_csv_auto('{_table_path('game_lineups', out_dir, cache_hours)}', "
             "strict_mode=false, null_padding=true, all_varchar=true)"
         )
         con.sql(f"""
@@ -440,8 +454,13 @@ def main():
                     help="scan appearances/lineups; default because the live model/UI use usage coverage")
     ap.add_argument("--skip-usage", dest="include_usage", action="store_false",
                     help="skip appearances/lineups for a faster team/player mart rebuild")
+    ap.add_argument("--cache-hours", type=float, default=24.0,
+                    help="reuse downloaded source tables for this many hours; 0 forces refresh")
+    ap.add_argument("--refresh-cache", dest="cache_hours", action="store_const", const=0.0,
+                    help="force an atomic redownload of all source tables")
     args = ap.parse_args()
-    meta, sample = build_external_mart(args.start, include_usage=args.include_usage)
+    meta, sample = build_external_mart(args.start, include_usage=args.include_usage,
+                                       cache_hours=args.cache_hours)
     print(f"external mart rows: {meta['rows']}")
     print(sample.to_string(index=False))
     print(f"wrote {OUT}")

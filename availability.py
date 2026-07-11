@@ -19,16 +19,30 @@ MAX_TEAM_SHARE = 0.5
 STRENGTH_SCALE = 2.0  # ponytail: heuristic; strength is z-scored so 0.25 share ~= -0.5 z
 
 
-def load_availability(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    data = json.loads(path.read_text())
-    return data if isinstance(data, dict) else {}
+def load_availability(path_or_paths) -> dict:
+    paths = [path_or_paths] if isinstance(path_or_paths, (str, Path)) else list(path_or_paths)
+    merged = {}
+    for path in map(Path, paths):
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            continue
+        for team, players in data.items():
+            by_name = {str(player.get("player", "")).casefold(): player
+                       for player in merged.get(team, [])}
+            for player in players if isinstance(players, list) else []:
+                name = str(player.get("player", "")).casefold()
+                previous = by_name.get(name)
+                if previous is None or float(player.get("value_share", 0)) > float(previous.get("value_share", 0)):
+                    by_name[name] = player
+            merged[team] = list(by_name.values())
+    return merged
 
 
-def apply_availability(strength: dict, path: Path) -> tuple[dict, dict]:
+def apply_availability(strength: dict, path_or_paths) -> tuple[dict, dict]:
     """Return (adjusted strength, meta). Unknown teams in the file are reported, not applied."""
-    entries = load_availability(path)
+    entries = load_availability(path_or_paths)
     if not entries or not strength:
         return strength, {"present": False}
     adjusted = dict(strength)

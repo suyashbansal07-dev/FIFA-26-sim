@@ -45,6 +45,7 @@ BACKTEST_FILE = ROOT / "output" / "backtest.json"
 SAMPLES_FILE = ROOT / "output" / "param_samples.json"
 MARKET_FILE = ROOT / "output" / "market_odds.json"
 AVAILABILITY_FILE = ROOT / "data" / "availability.json"
+LINEUP_AVAILABILITY_FILE = ROOT / "data" / "lineup_availability.json"
 EXTERNAL_DIR = ROOT / "output" / "external"
 MATCHES_FILE = ROOT / "data" / "matches.csv"
 FEATURES_FILE = ROOT / "data" / "match_features.csv"
@@ -54,7 +55,7 @@ FORWARD_CALIBRATION = ROOT / "output" / "forward_calibration.json"
 FORWARD_CALIBRATION_APPLIED = ROOT / "output" / "forward_calibration_applied.json"
 MODEL_CODE_FILES = (
     "wc_sim.py", "external_signals.py", "form_signals.py", "live_signals.py",
-    "availability.py", "match_features.py",
+    "availability.py", "match_features.py", "lineup_signals.py",
 )
 app = Flask(__name__, static_folder="web", static_url_path="")
 STATE = {"payload": None, "params": None, "pens": {}, "samples": None,
@@ -84,7 +85,10 @@ def _file_signature(path):
 
 
 def _availability_signature(path=None):
-    return _file_signature(path or AVAILABILITY_FILE)
+    if path is not None:
+        return _file_signature(path)
+    return {"manual": _file_signature(AVAILABILITY_FILE),
+            "confirmed_lineup": _file_signature(LINEUP_AVAILABILITY_FILE)}
 
 
 def _model_input_signature():
@@ -595,7 +599,8 @@ def refresh(ensure_uncertainty=False):
             STATE["samples"] = _regenerate_samples(df, bracket)
             JOB.update(phase="refreshing", detail="simulating the fresh uncertainty ensemble")
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
-        STATE["external_strength"], STATE["availability_meta"] = apply_availability(STATE["external_strength"], AVAILABILITY_FILE)
+        STATE["external_strength"], STATE["availability_meta"] = apply_availability(
+            STATE["external_strength"], (AVAILABILITY_FILE, LINEUP_AVAILABILITY_FILE))
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength(df)
         STATE["live_strength"], STATE["live_meta"] = _load_live_strength(df)
         if STATE["samples"]:
@@ -731,7 +736,8 @@ def load_state():
         df = load_matches(CFG["years"])
         STATE["samples"] = _load_samples(df)
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
-        STATE["external_strength"], STATE["availability_meta"] = apply_availability(STATE["external_strength"], AVAILABILITY_FILE)
+        STATE["external_strength"], STATE["availability_meta"] = apply_availability(
+            STATE["external_strength"], (AVAILABILITY_FILE, LINEUP_AVAILABILITY_FILE))
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength(df)
         STATE["live_strength"], STATE["live_meta"] = _load_live_strength(df)
         _attach_external(STATE["payload"])

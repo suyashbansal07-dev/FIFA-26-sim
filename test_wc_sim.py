@@ -79,6 +79,41 @@ def test_external_strength_uses_rank_only_fallback_without_fake_player_data():
     assert strength["B"] < strength["Cape Verde"] < strength["A"]
 
 
+def test_external_table_cache_reuses_fresh_file_and_refreshes_atomically():
+    import io
+    import external_data
+    with TemporaryDirectory() as d:
+        root = Path(d)
+        cache = root / "cache"
+        cache.mkdir()
+        dst = cache / "players.csv.gz"
+        dst.write_bytes(b"old")
+        old_open = external_data.urllib.request.urlopen
+        calls = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        external_data.urllib.request.urlopen = lambda *args, **kwargs: (
+            calls.append(args[0]) or Response(b"new"))
+        try:
+            external_data._table_path("players", root, max_age_hours=24)
+            assert not calls and dst.read_bytes() == b"old"
+            external_data._table_path("players", root, max_age_hours=0)
+            assert len(calls) == 1 and dst.read_bytes() == b"new"
+            assert not (cache / "players.csv.gz.tmp").exists()
+            external_data.urllib.request.urlopen = lambda *args, **kwargs: (_ for _ in ()).throw(
+                OSError("source unavailable"))
+            external_data._table_path("players", root, max_age_hours=0)
+            assert dst.read_bytes() == b"new"
+        finally:
+            external_data.urllib.request.urlopen = old_open
+
+
 def test_external_strength_uses_quality_depth_and_chemistry():
     from external_signals import build_external_strength
     rows = pd.DataFrame([
@@ -374,6 +409,47 @@ def test_availability_penalty_rides_external_channel(tmp_path=None):
                                              {"player": "B", "value_share": 0.4}]}))
         adj2, _ = apply_availability(strength, p)
         assert adj2["France"] == 1.2 - 2.0 * 0.5, "team share must cap at 0.5"
+        q = Path(d) / "lineup.json"
+        q.write_text(_json.dumps({"France": [{"player": "A", "value_share": 0.2}]}))
+        adj3, _ = apply_availability(strength, (p, q))
+        assert adj3["France"] == adj2["France"], "same player must not be counted twice"
+
+
+def test_espn_summary_extracts_confirmed_player_starters():
+    from lineup_signals import player_rows_from_summary
+    event = {"id": "7", "date": "2026-07-11T21:00Z",
+             "status": {"type": {"name": "STATUS_SCHEDULED"}}}
+    rosters = []
+    for side, team in (("home", "Norway"), ("away", "England")):
+        players = [{"starter": True, "athlete": {"id": str(i), "displayName": f"{team} {i}"},
+                    "position": {"displayName": "Forward"}, "formationPlace": str(i),
+                    "stats": [{"name": "appearances", "value": 0}]}
+                   for i in range(11)]
+        rosters.append({"homeAway": side, "team": {"displayName": team},
+                        "formation": "4-3-3", "roster": players})
+    rows = player_rows_from_summary(event, {"rosters": rosters})
+    assert len(rows) == 22 and all(row["lineup_confirmed"] for row in rows)
+    assert sum(row["starter"] for row in rows if row["team"] == "Norway") == 11
+
+
+def test_confirmed_lineup_penalizes_only_net_recent_core_shortfall():
+    from lineup_signals import build_confirmed_lineup_availability
+    rows = []
+    for event_id, day in (("1", "2026-07-01"), ("2", "2026-07-05")):
+        rows.extend({"date": day, "espn_event_id": event_id, "event_status": "STATUS_FULL_TIME",
+                     "team": "A", "player": f"Core {i}", "starter": True,
+                     "lineup_confirmed": True} for i in range(11))
+    rows.extend({"date": "2026-07-11", "espn_event_id": "3", "event_status": "STATUS_SCHEDULED",
+                 "team": "A", "player": player, "starter": True, "lineup_confirmed": True}
+                for player in [*(f"Core {i}" for i in range(10)), "Replacement"])
+    pool = pd.DataFrame([{"team": "A", "player": f"Core {i}", "position": "Attack",
+                          "market_value_in_eur": 10} for i in range(11)]
+                        + [{"team": "A", "player": "Replacement", "position": "Attack",
+                            "market_value_in_eur": 1}])
+    mart = pd.DataFrame([{"team": "A", "top23_market_value": 200}])
+    availability, meta = build_confirmed_lineup_availability(pd.DataFrame(rows), pool, mart)
+    assert meta["present"] and [entry["player"] for entry in availability["A"]] == ["Core 10"]
+    assert abs(sum(entry["value_share"] for entry in availability["A"]) - 0.045) < 1e-9
 
 
 def test_whatif_rejects_impossible_r16_override():

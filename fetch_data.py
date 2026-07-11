@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from match_features import fetch_espn_match_features
+from lineup_signals import AVAILABILITY_FILE as LINEUP_AVAILABILITY_FILE, fetch_lineup_signals
 
 BASE = "https://raw.githubusercontent.com/martj42/international_results/master/"
 ESPN = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates={span}"
@@ -114,12 +115,20 @@ def fetch(quiet=False):
         feature_meta = {"error": str(e)}
         if not quiet:
             print(f"WARNING: ESPN match-feature fetch failed ({e}); continuing without stats/xG")
+    try:
+        lineup_meta = fetch_lineup_signals(quiet=True)
+    except Exception as e:  # confirmed-lineup layer is optional and must fail closed
+        lineup_meta = {"error": str(e)}
+        LINEUP_AVAILABILITY_FILE.parent.mkdir(exist_ok=True)
+        LINEUP_AVAILABILITY_FILE.write_text("{}")
+        if not quiet:
+            print(f"WARNING: ESPN lineup fetch failed ({e}); continuing without lineup adjustments")
 
     played = matches.dropna(subset=["home_score"])
     wc = played[(played["tournament"] == "FIFA World Cup") & (played["date"] >= "2026-06-01")]
     meta = {"rows": len(matches), "newest_result": str(played["date"].max().date()),
             "wc2026_played": len(wc), "espn_topup_rows": n_new,
-            "match_features": feature_meta}
+            "match_features": feature_meta, "player_lineups": lineup_meta}
     if not quiet:
         print(f"rows: {meta['rows']} | newest played result: {meta['newest_result']} | "
               f"WC-2026 played: {meta['wc2026_played']} | ESPN top-up: {n_new}")
