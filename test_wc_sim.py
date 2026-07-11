@@ -589,6 +589,48 @@ def test_server_applies_forward_calibration_once():
             server.CFG["live_weight"] = old_live_weight
 
 
+def test_refresh_job_builds_uncertainty_in_one_refresh_pass():
+    import server
+    old_refresh = server.refresh
+    old_job = dict(server.JOB)
+    calls = []
+    try:
+        server.refresh = lambda **kwargs: calls.append(kwargs)
+        server._run_refresh_job()
+        assert calls == [{"ensure_uncertainty": True}]
+        assert server.JOB["phase"] == "idle"
+    finally:
+        server.refresh = old_refresh
+        server.JOB.clear()
+        server.JOB.update(old_job)
+
+
+def test_regenerate_samples_writes_current_payload():
+    import json
+    import server
+    import uncertainty
+    with TemporaryDirectory() as d:
+        old_file = server.SAMPLES_FILE
+        old_bootstrap = uncertainty.bootstrap_samples
+        server.SAMPLES_FILE = Path(d) / "param_samples.json"
+        uncertainty.bootstrap_samples = lambda *args, **kwargs: [{
+            "attack": {"A": 0.1, "B": -0.1},
+            "defence": {"A": -0.1, "B": 0.1},
+            "hfa": 0.2,
+            "rho": -0.08,
+        }]
+        try:
+            df = pd.DataFrame({"date": pd.to_datetime(["2026-07-10"])})
+            bracket = {"r16": [{"home": "A", "away": "B"}]}
+            payload = server._regenerate_samples(df, bracket, boots=1)
+            written = json.loads(server.SAMPLES_FILE.read_text())
+            assert payload == written
+            assert payload["boots"] == 1 and payload["data_max_date"] == "2026-07-10"
+        finally:
+            server.SAMPLES_FILE = old_file
+            uncertainty.bootstrap_samples = old_bootstrap
+
+
 def test_match_feature_extracts_stats_and_xg_from_espn_shapes():
     from match_features import attach_features, feature_row_from_event, feature_coverage
     event = {

@@ -542,7 +542,27 @@ def _attach_prediction(payload):
     return payload
 
 
-def refresh():
+def _regenerate_samples(df, bracket, boots=16):
+    from uncertainty import bootstrap_samples
+    JOB.update(phase="bootstrapping",
+               detail=f"refitting {boots} bootstrap resamples for the uncertainty ensemble")
+    alive = sorted({t for fx in bracket["r16"] for t in (fx["home"], fx["away"])})
+    samples = bootstrap_samples(df, boots, CFG["half_life"], CFG["friendly_weight"],
+                                required=alive)
+    payload = {
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "data_max_date": str(df["date"].max().date()),
+        "boots": boots,
+        "half_life": CFG["half_life"],
+        "friendly_weight": CFG["friendly_weight"],
+        "samples": samples,
+    }
+    SAMPLES_FILE.parent.mkdir(exist_ok=True)
+    SAMPLES_FILE.write_text(json.dumps(payload))
+    return payload
+
+
+def refresh(ensure_uncertainty=False):
     """Scrape -> refit -> re-simulate -> rebuild payload. Serialized by LOCK."""
     with LOCK:
         calibration_applied = _apply_forward_calibration()
@@ -556,6 +576,9 @@ def refresh():
         STATE["pens"] = shootout_rates(shootouts)
         known = known_winners(bracket, df, shootouts)
         STATE["samples"] = _load_samples(df)
+        if ensure_uncertainty and STATE["samples"] is None:
+            STATE["samples"] = _regenerate_samples(df, bracket)
+            JOB.update(phase="refreshing", detail="simulating the fresh uncertainty ensemble")
         STATE["external_strength"], STATE["external_meta"] = load_external_strength(EXTERNAL_DIR / "project_team_enrichment.csv")
         STATE["external_strength"], STATE["availability_meta"] = apply_availability(STATE["external_strength"], AVAILABILITY_FILE)
         STATE["form_strength"], STATE["form_meta"] = _load_form_strength(df)
@@ -865,30 +888,13 @@ JOB_LOCK = threading.Lock()
 def _run_refresh_job():
     try:
         JOB.update(phase="refreshing", detail="scrape + refit + simulate", error=None)
-        refresh()
+        refresh(ensure_uncertainty=True)
         if os.environ.get("THE_ODDS_API_KEY"):
             try:
                 import market_anchor
                 market_anchor.fetch(os.environ["THE_ODDS_API_KEY"])
             except Exception as e:  # anchor is a benchmark; never block the pipeline
                 print(f"market anchor fetch failed: {e}")
-        if STATE["samples"] is None:  # stale/absent -> regenerate so the ensemble survives new data
-            from uncertainty import bootstrap_samples
-            JOB.update(phase="bootstrapping",
-                       detail="refitting 16 bootstrap resamples for the uncertainty ensemble")
-            df = load_matches(CFG["years"])
-            bracket = json.loads((ROOT / "bracket_2026.json").read_text())
-            alive = sorted({t for fx in bracket["r16"] for t in (fx["home"], fx["away"])})
-            samples = bootstrap_samples(df, 16, CFG["half_life"], CFG["friendly_weight"],
-                                        required=alive)
-            SAMPLES_FILE.parent.mkdir(exist_ok=True)
-            SAMPLES_FILE.write_text(json.dumps({
-                "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "data_max_date": str(df["date"].max().date()),
-                "boots": 16, "half_life": CFG["half_life"],
-                "friendly_weight": CFG["friendly_weight"], "samples": samples}))
-            JOB.update(phase="refreshing", detail="re-simulating with the fresh ensemble")
-            refresh()
         JOB.update(phase="idle", detail="")
     except Exception as e:  # surfaced via /api/status; stale payload keeps serving
         JOB.update(phase="error", detail="", error=str(e))
@@ -1069,7 +1075,7 @@ def main():
 
     loaded = load_state()
     meta = STATE["payload"]["meta"] if loaded else {}
-    if (not loaded or meta.get("sims") != CFG["sims"] or meta.get("sampler") != CFG["sampler"]
+    needs_refresh = (not loaded or meta.get("sims") != CFG["sims"] or meta.get("sampler") != CFG["sampler"]
             or meta.get("half_life_days") != CFG["half_life"]
             or meta.get("friendly_weight") != CFG["friendly_weight"]
             or meta.get("goal_scale") != CFG["goal_scale"]
@@ -1077,9 +1083,13 @@ def main():
             or meta.get("external_weight") != CFG["external_weight"]
             or meta.get("form_weight") != CFG["form_weight"]
             or meta.get("live_weight") != CFG["live_weight"]
-            or _state_needs_refresh(meta, max_age_hours=args.auto_refresh_hours)):
+            or _state_needs_refresh(meta, max_age_hours=args.auto_refresh_hours))
+    if not loaded:
         print("refreshing state (scrape + fit + simulate)...")
         refresh()
+    elif needs_refresh:
+        print("serving cached state while refresh runs in background...")
+        _start_refresh_job()
     print(f"model ready: {STATE['payload']['meta']}")
     if args.auto_refresh_hours > 0:
         threading.Thread(target=auto_refresh_loop, args=(args.auto_refresh_hours,), daemon=True).start()

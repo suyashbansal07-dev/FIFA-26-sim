@@ -99,6 +99,10 @@ Generated model data is intentionally ignored under `output/` and most
 
 Open <http://127.0.0.1:8026>.
 
+When a compatible cache is stale, the server keeps it available while one
+background pass refreshes data, refits 16 bootstrap samples, and runs the
+million-path ensemble. A first run without any cache still builds synchronously.
+
 ## How To Use
 
 1. Read the bracket: green names are the current forced-pick verdict, and

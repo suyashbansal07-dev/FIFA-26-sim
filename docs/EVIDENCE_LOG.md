@@ -608,3 +608,24 @@ all OOS headline metrics and widens the overfit gap. The negative sensitivity
 looks like mean reversion but does not improve primary RPS or log-loss, so it is
 not mislabeled and enabled as momentum. Current-tournament xG/stat momentum
 continues through the separately confidence-shrunk live-context engine.
+
+## Single-pass uncertainty refresh (2026-07-11)
+
+Runtime inspection found a stale `param_samples.json`, so the live million-path
+simulation reported `uncertainty.mode=point-estimate`. The background repair
+path first ran a full point-estimate tournament, then 16 bootstrap refits, then
+another full tournament. Cold stale-cache startup also waited for the first
+full simulation before binding Flask.
+
+Repair:
+
+- background refresh now fetches, fits, regenerates stale bootstrap parameters,
+  and runs the ensemble once;
+- a compatible stale cache is served immediately while that pass runs;
+- a missing cache still builds synchronously so API handlers never receive an
+  empty payload;
+- sample metadata is written before simulation and covered by focused tests.
+
+This changes runtime orchestration, not model probabilities. Sixteen refits
+remain a coarse empirical parameter distribution; convergence diagnostics and
+replicated scrambled-Sobol error estimates remain separate limitations.
