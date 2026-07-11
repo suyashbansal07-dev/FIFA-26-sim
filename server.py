@@ -293,12 +293,27 @@ def _apply_forward_calibration():
     report = _read_json(FORWARD_CALIBRATION) or {}
     policy = report.get("calibration_policy") or {}
     action = policy.get("action")
-    if action not in ("reduce_prior_or_goal_confidence", "allow_slightly_more_prior_confidence"):
-        return {"applied": False, "action": action or "none", "reason": policy.get("reason", "no adjustment")}
-    report_id = report.get("generated")
     state = _read_json(FORWARD_CALIBRATION_APPLIED) or {}
+    restored, restored_any = {}, False
+    for knob, saved in (state.get("knobs") or {}).items():
+        if knob not in KNOB_RANGES or not isinstance(saved, dict) or "after" not in saved:
+            continue
+        try:
+            target = _clamp(float(saved["after"]), *KNOB_RANGES[knob])
+        except (TypeError, ValueError):
+            continue
+        before = CFG[knob]
+        CFG[knob] = target
+        restored[knob] = {"before": round(before, 4), "after": round(target, 4)}
+        restored_any |= target != before
+    if action not in ("reduce_prior_or_goal_confidence", "allow_slightly_more_prior_confidence"):
+        return {"applied": False, "restored": restored_any, "action": action or "none",
+                "reason": policy.get("reason", "no adjustment"), "knobs": restored,
+                "external_weight": CFG["external_weight"], "live_weight": CFG["live_weight"]}
+    report_id = report.get("generated")
     if state.get("report_generated") == report_id:
-        return {"applied": False, "action": action, "reason": "already applied",
+        return {"applied": False, "restored": restored_any, "action": action,
+                "reason": "already applied", "knobs": restored,
                 "external_weight": CFG["external_weight"], "live_weight": CFG["live_weight"]}
     fallback = -0.01 if action == "reduce_prior_or_goal_confidence" else 0.01
     adjustments = policy.get("knob_adjustments") or {
@@ -316,19 +331,19 @@ def _apply_forward_calibration():
         if after != before:
             CFG[knob] = after
             applied = True
-    result = {"applied": applied, "action": action, "knobs": knobs,
+    result = {"applied": applied, "restored": restored_any, "action": action, "knobs": knobs,
               "report_generated": report_id, "settled": policy.get("settled"),
               "external_weight": CFG["external_weight"], "live_weight": CFG["live_weight"]}
     if "external_weight" in knobs:
         result.update({"knob": "external_weight",
                        "before": knobs["external_weight"]["before"],
                        "after": knobs["external_weight"]["after"]})
-    if applied:
+    if knobs:
         _write_json(FORWARD_CALIBRATION_APPLIED, {
             **result,
             "applied_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         })
-    else:
+    if not applied:
         result["reason"] = "at configured bound or no supported knobs"
     return result
 

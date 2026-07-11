@@ -629,3 +629,24 @@ Repair:
 This changes runtime orchestration, not model probabilities. Sixteen refits
 remain a coarse empirical parameter distribution; convergence diagnostics and
 replicated scrambled-Sobol error estimates remain separate limitations.
+
+Live proof after the repair run:
+
+- `POST /api/refresh`: background job entered `bootstrapping`;
+- `GET /api/status`: job returned to `idle` with
+  `uncertainty={"mode":"bootstrap-ensemble","boots":16}`;
+- cached payload remained available while refits ran.
+
+## Durable forward-calibration state (2026-07-11)
+
+Accepted forward-loop nudges were stored with a report id, but process restart
+reset runtime knobs to CLI defaults. The matching report was then classified as
+already applied, so its accepted values were not restored. A later `hold`
+report had the same loss of state.
+
+The server now restores the last validated absolute knob values before reading
+the newest policy. A new report applies its bounded delta on top of those values;
+the same report is never applied twice; `hold` preserves prior adjustments.
+Malformed or unsupported persisted knobs are ignored and all restored values
+are clamped to the existing configured ranges. Restart, duplicate-report, and
+hold-policy behavior are covered by the self-check suite.

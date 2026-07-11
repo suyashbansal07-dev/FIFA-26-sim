@@ -578,8 +578,22 @@ def test_server_applies_forward_calibration_once():
             assert out["applied"] and out["before"] == 0.12 and out["after"] == 0.13
             assert out["knobs"]["live_weight"]["before"] == 0.03
             assert out["knobs"]["live_weight"]["after"] == 0.035
+            server.CFG["external_weight"] = 0.12
+            server.CFG["live_weight"] = 0.03
             again = server._apply_forward_calibration()
             assert not again["applied"] and again["reason"] == "already applied"
+            assert again["restored"]
+            assert server.CFG["external_weight"] == 0.13
+            assert abs(server.CFG["live_weight"] - 0.035) < 1e-12
+
+            server.FORWARD_CALIBRATION.write_text(json.dumps({
+                "generated": "g-hold-after",
+                "calibration_policy": {"action": "hold", "reason": "need more", "settled": 11},
+            }))
+            server.CFG["external_weight"] = 0.12
+            server.CFG["live_weight"] = 0.03
+            held = server._apply_forward_calibration()
+            assert held["restored"] and held["reason"] == "need more"
             assert server.CFG["external_weight"] == 0.13
             assert abs(server.CFG["live_weight"] - 0.035) < 1e-12
         finally:
