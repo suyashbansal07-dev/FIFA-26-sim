@@ -1,4 +1,4 @@
-penaltyblog>=1.11
+penaltyblog>=1.12.3
 pandas
 numpy
 scipy
